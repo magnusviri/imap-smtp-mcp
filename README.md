@@ -33,7 +33,11 @@ The Gmail, iCloud, and Outlook.com examples include provider endpoints.
 Outbound mail is draft-first. `create_draft` stores a local draft;
 `send_message`, `reply_to_message`, and `forward_message` require explicit
 confirmation and an idempotency key. Recipient allowlists, attachment limits,
-and per-account rate limits are enforced before SMTP delivery.
+and per-account rate limits are enforced before SMTP delivery. By default, a
+recipient must match `allowed_recipients` or `allowed_recipient_domains`. To
+explicitly opt into unrestricted delivery for an account, set
+`allow_any_recipient = true` in its `[accounts.outbound_policy]`; it overrides
+both allowlists.
 
 ## Run
 

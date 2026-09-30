@@ -82,6 +82,7 @@ def test_outbound_policy_configuration_is_typed(valid_config) -> None:
     raw["accounts"][1]["outbound_policy"] = {
         "allowed_recipients": ["Friend@Example.NET"],
         "allowed_recipient_domains": ["Example.ORG"],
+        "allow_any_recipient": True,
         "attachment_root": "/tmp/personal-mail-attachments",
         "max_attachment_bytes": 1234,
         "rate_limit_messages": 4,
@@ -92,6 +93,7 @@ def test_outbound_policy_configuration_is_typed(valid_config) -> None:
 
     assert policy.allowed_recipients == ("friend@example.net",)
     assert policy.allowed_recipient_domains == ("example.org",)
+    assert policy.allow_any_recipient is True
     assert str(policy.attachment_root) == "/tmp/personal-mail-attachments"
     assert policy.max_attachment_bytes == 1234
     assert policy.rate_limit_messages == 4
@@ -103,6 +105,7 @@ def test_outbound_policy_configuration_is_typed(valid_config) -> None:
     [
         ("allowed_recipients", ["not-an-address"]),
         ("allowed_recipient_domains", ["@example.org"]),
+        ("allow_any_recipient", "true"),
         ("max_attachment_bytes", -1),
         ("rate_limit_messages", 0),
         ("rate_limit_window_seconds", True),

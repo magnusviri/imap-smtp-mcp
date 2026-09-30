@@ -64,6 +64,7 @@ class OutboundPolicySettings:
 
     allowed_recipients: tuple[str, ...] = ()
     allowed_recipient_domains: tuple[str, ...] = ()
+    allow_any_recipient: bool = False
     attachment_root: Path | None = None
     max_attachment_bytes: int = 10 * 1024 * 1024
     rate_limit_messages: int = 20
@@ -281,6 +282,11 @@ def _parse_outbound_policy(value: Any, account_id: str) -> OutboundPolicySetting
         raise ConfigurationError(
             f"Account {account_id!r} has an invalid allowed recipient domain."
         )
+    allow_any_recipient = data.get("allow_any_recipient", False)
+    if not isinstance(allow_any_recipient, bool):
+        raise ConfigurationError(
+            f"Account {account_id!r} allow_any_recipient must be boolean."
+        )
     root_value = data.get("attachment_root")
     attachment_root = None
     if root_value is not None:
@@ -305,12 +311,13 @@ def _parse_outbound_policy(value: Any, account_id: str) -> OutboundPolicySetting
         data, "rate_limit_window_seconds", account_id, default=3600
     )
     return OutboundPolicySettings(
-        recipients,
-        domains,
-        attachment_root,
-        maximum,
-        messages,
-        window,
+        allowed_recipients=recipients,
+        allowed_recipient_domains=domains,
+        allow_any_recipient=allow_any_recipient,
+        attachment_root=attachment_root,
+        max_attachment_bytes=maximum,
+        rate_limit_messages=messages,
+        rate_limit_window_seconds=window,
     )
 
 

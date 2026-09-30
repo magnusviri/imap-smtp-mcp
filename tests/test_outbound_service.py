@@ -175,6 +175,37 @@ def test_policy_denials_never_reach_provider(
     assert adapter.deliveries == []
 
 
+def test_allow_any_recipient_bypasses_recipient_allowlist(tmp_path) -> None:
+    policy = OutboundPolicy(
+        sender_addresses=("owner@example.com",),
+        allow_any_recipient=True,
+    )
+    service, adapter, _store = _service(tmp_path, policy=policy)
+    created = _run(
+        service.execute(
+            "create_draft",
+            {
+                "account_id": "personal",
+                "content": _content(to=[{"address": "outside@example.org"}]),
+            },
+        )
+    )
+
+    _run(
+        service.execute(
+            "send_message",
+            {
+                "account_id": "personal",
+                "draft_id": created["draft_id"],
+                "confirm_send": True,
+                "idempotency_key": "unrestricted-recipient",
+            },
+        )
+    )
+
+    assert adapter.deliveries == [("send", created["draft_id"])]
+
+
 def test_confirmation_attachment_limit_and_rate_limit_prevent_send(tmp_path) -> None:
     attachment = tmp_path / "report.txt"
     attachment.write_bytes(b"1234")
@@ -287,6 +318,7 @@ def test_runtime_policy_is_built_from_validated_account_configuration() -> None:
                     "smtp": {"host": "smtp.example.com", "port": 465, "tls": True},
                     "outbound_policy": {
                         "allowed_recipients": ["friend@example.net"],
+                        "allow_any_recipient": True,
                         "rate_limit_messages": 2,
                     },
                 }
@@ -298,4 +330,5 @@ def test_runtime_policy_is_built_from_validated_account_configuration() -> None:
 
     assert policy.sender_addresses == ("owner@example.com",)
     assert policy.allowed_recipients == ("friend@example.net",)
+    assert policy.allow_any_recipient is True
     assert policy.rate_limit_messages == 2

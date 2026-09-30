@@ -45,6 +45,7 @@ class OutboundPolicy:
     sender_addresses: tuple[str, ...]
     allowed_recipients: tuple[str, ...] = ()
     allowed_recipient_domains: tuple[str, ...] = ()
+    allow_any_recipient: bool = False
     attachment_root: Path | None = None
     max_attachment_bytes: int = 10 * 1024 * 1024
     rate_limit_messages: int = 20
@@ -66,6 +67,7 @@ class OutboundPolicy:
             sender_addresses=account.sender_addresses,
             allowed_recipients=configured.allowed_recipients,
             allowed_recipient_domains=configured.allowed_recipient_domains,
+            allow_any_recipient=configured.allow_any_recipient,
             attachment_root=configured.attachment_root,
             max_attachment_bytes=configured.max_attachment_bytes,
             rate_limit_messages=configured.rate_limit_messages,
@@ -371,18 +373,19 @@ class GuardedOutboundService:
         recipients = (*draft.to, *draft.cc, *draft.bcc)
         if not recipients:
             raise ToolError("At least one recipient is required.")
-        allowed = {item.casefold() for item in policy.allowed_recipients}
-        domains = {
-            item.casefold().removeprefix("@")
-            for item in policy.allowed_recipient_domains
-        }
-        for recipient in recipients:
-            address = recipient.address.casefold()
-            domain = address.rsplit("@", 1)[-1]
-            if address not in allowed and domain not in domains:
-                raise ToolError(
-                    "A recipient is not permitted by the account allowlist."
-                )
+        if not policy.allow_any_recipient:
+            allowed = {item.casefold() for item in policy.allowed_recipients}
+            domains = {
+                item.casefold().removeprefix("@")
+                for item in policy.allowed_recipient_domains
+            }
+            for recipient in recipients:
+                address = recipient.address.casefold()
+                domain = address.rsplit("@", 1)[-1]
+                if address not in allowed and domain not in domains:
+                    raise ToolError(
+                        "A recipient is not permitted by the account allowlist."
+                    )
         if draft.attachments and policy.attachment_root is None:
             raise ToolError("Local attachments require a configured attachment_root.")
 
