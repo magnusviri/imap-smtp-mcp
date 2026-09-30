@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import os
 from typing import Annotated, Any
 
+import uvicorn
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from personal_mail_mcp.config import ConfigurationError, load_config
 from personal_mail_mcp.diagnostics import configure_diagnostics
@@ -245,8 +250,55 @@ def create_server(executor: ToolExecutor | None = None) -> MCPServer:
     return server
 
 
+class BearerAuthMiddleware:
+    """Require a local bearer token before MCP handles any HTTP request."""
+
+    def __init__(self, app, *, token: str) -> None:
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        provided = Request(scope).headers.get("authorization", "")
+        expected = f"Bearer {self.token}"
+        if not hmac.compare_digest(provided, expected):
+            await PlainTextResponse(
+                "Unauthorized", status_code=401, headers={"WWW-Authenticate": "Bearer"}
+            )(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+def _http_settings() -> tuple[str, int, str]:
+    host = os.environ.get("PERSONAL_MAIL_MCP_HOST", "127.0.0.1")
+    allow_container_bind = (
+        os.environ.get("PERSONAL_MAIL_MCP_ALLOW_CONTAINER_BIND") == "1"
+    )
+    try:
+        if not ipaddress.ip_address(host).is_loopback and not allow_container_bind:
+            raise ValueError
+    except ValueError:
+        raise SystemExit(
+            "PERSONAL_MAIL_MCP_HOST must be a loopback IP address unless PERSONAL_MAIL_MCP_ALLOW_CONTAINER_BIND=1."
+        ) from None
+    try:
+        port = int(os.environ.get("PERSONAL_MAIL_MCP_PORT", "8787"))
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except ValueError:
+        raise SystemExit(
+            "PERSONAL_MAIL_MCP_PORT must be an integer from 1 to 65535."
+        ) from None
+    token = os.environ.get("PERSONAL_MAIL_MCP_TOKEN", "")
+    if len(token) < 32:
+        raise SystemExit("PERSONAL_MAIL_MCP_TOKEN must contain at least 32 characters.")
+    return host, port, token
+
+
 def main() -> None:
-    """Run the personal-mail server over the MCP stdio transport."""
+    """Run the personal-mail server over authenticated loopback HTTP."""
     configure_diagnostics()
     config_path = os.environ.get("PERSONAL_MAIL_MCP_CONFIG")
     executor = None
@@ -255,5 +307,8 @@ def main() -> None:
             executor = create_configured_executor(load_config(config_path))
         except (ConfigurationError, OSError, ValueError) as error:
             raise SystemExit(f"Could not start personal-mail-mcp: {error}") from None
+    host, port, token = _http_settings()
     server = create_server(executor) if executor is not None else create_server()
-    server.run(transport="stdio")
+    app = server.streamable_http_app(streamable_http_path="/mcp", host=host)
+    app.add_middleware(BearerAuthMiddleware, token=token)
+    uvicorn.run(app, host=host, port=port, log_level="warning")

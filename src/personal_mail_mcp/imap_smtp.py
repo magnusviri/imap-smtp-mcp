@@ -46,6 +46,7 @@ class ImapSmtpError(MailAdapterError):
 
 class ImapClient(Protocol):
     def login(self, username: str, password: str) -> object: ...
+    def authenticate(self, mechanism: str, authobject) -> object: ...
     def list(self) -> tuple[str, Sequence[bytes | None]]: ...
     def select(
         self, mailbox: str, readonly: bool = False
@@ -60,6 +61,7 @@ class ImapClient(Protocol):
 
 class SmtpClient(Protocol):
     def login(self, username: str, password: str) -> object: ...
+    def auth(self, mechanism: str, authobject) -> object: ...
     def send_message(
         self, message: EmailMessage, from_addr: str, to_addrs: Sequence[str]
     ) -> object: ...
@@ -81,6 +83,10 @@ def _default_smtp(host: str, port: int, timeout: float) -> SmtpClient:
     return smtplib.SMTP_SSL(
         host, port, timeout=timeout, context=ssl.create_default_context()
     )
+
+
+def _default_smtp_starttls(host: str, port: int, timeout: float) -> SmtpClient:
+    return smtplib.SMTP(host, port, timeout=timeout)
 
 
 def _cursor(offset: int) -> str:
@@ -217,6 +223,26 @@ class ImapSmtpAdapter:
                 f"Could not resolve the credential for account {self.account.id!r}."
             ) from None
 
+    def _xoauth2_payload(self, credential: str) -> bytes:
+        return (
+            f"user={self.account.username}\x01auth=Bearer {credential}\x01\x01".encode()
+        )
+
+    def _authenticate_imap(self, client: ImapClient, credential: str) -> None:
+        if self.account.auth_mode == "password":
+            client.login(self.account.username, credential)
+            return
+        client.authenticate(
+            "XOAUTH2", lambda _challenge: self._xoauth2_payload(credential)
+        )
+
+    def _authenticate_smtp(self, client: SmtpClient, credential: str) -> None:
+        if self.account.auth_mode == "password":
+            client.login(self.account.username, credential)
+            return
+        payload = self._xoauth2_payload(credential).decode()
+        client.auth("XOAUTH2", lambda _challenge=None: payload)
+
     async def _blocking(self, function, context: OperationContext):
         context.raise_if_cancelled()
         self._check_tls()
@@ -255,7 +281,7 @@ class ImapSmtpAdapter:
             self.account.imap.host, self.account.imap.port, timeout
         )
         try:
-            client.login(self.account.username, password)
+            self._authenticate_imap(client, password)
             return operation(client)
         finally:
             try:
@@ -517,11 +543,23 @@ class ImapSmtpAdapter:
         password = self._password()
         message = self._message(draft, source, relation)
         recipients = [item.address for item in (*draft.to, *draft.cc, *draft.bcc)]
-        client = self._smtp_factory(
-            self.account.smtp.host, self.account.smtp.port, timeout
-        )
+        if self.account.smtp.starttls and self._smtp_factory is _default_smtp:
+            client = _default_smtp_starttls(
+                self.account.smtp.host, self.account.smtp.port, timeout
+            )
+        else:
+            client = self._smtp_factory(
+                self.account.smtp.host, self.account.smtp.port, timeout
+            )
         try:
-            client.login(self.account.username, password)
+            if self.account.smtp.starttls:
+                starttls = getattr(client, "starttls", None)
+                if not callable(starttls):
+                    raise ImapSmtpError(
+                        "The configured SMTP transport does not support STARTTLS."
+                    )
+                starttls(context=ssl.create_default_context())
+            self._authenticate_smtp(client, password)
             client.send_message(message, draft.sender.address, recipients)
         finally:
             try:
@@ -552,7 +590,7 @@ class ImapSmtpAdapter:
                 context.timeout_seconds,
             )
             try:
-                client.login(self.account.username, password)
+                self._authenticate_imap(client, password)
                 source_message = self._source(client, checked)
             finally:
                 try:

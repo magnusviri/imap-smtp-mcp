@@ -1,0 +1,28 @@
+# Outlook.com endpoint reference. Outlook.com requires OAuth2/Modern Auth.
+# Store a short-lived OAuth2 access token in Keychain under this reference.
+[server]
+keychain_service = "personal-mail-mcp"
+
+[[accounts]]
+id = "outlook-com"
+type = "imap-smtp"
+sender_addresses = ["you@outlook.com"]
+mailboxes = ["INBOX", "Sent Items", "Drafts"]
+username = "you@outlook.com"
+secret_ref = "outlook-com-oauth2-token"
+auth_mode = "oauth2"
+
+[accounts.imap]
+host = "outlook.office365.com"
+port = 993
+tls = true
+
+[accounts.smtp]
+host = "smtp-mail.outlook.com"
+port = 587
+tls = true
+starttls = true
+
+[accounts.outbound_policy]
+allowed_recipients = ["test-recipient@example.net"]
+attachment_root = "/Users/YOU/Documents/Mail Attachments"

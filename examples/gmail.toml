@@ -1,0 +1,27 @@
+# Gmail / Google Workspace. Store a Google app password (or supported OAuth
+# bridge credential) under this Keychain reference; never put it in this file.
+[server]
+keychain_service = "personal-mail-mcp"
+
+[[accounts]]
+id = "gmail"
+type = "imap-smtp"
+sender_addresses = ["you@gmail.com"]
+mailboxes = ["INBOX", "[Gmail]/Sent Mail", "[Gmail]/Drafts"]
+username = "you@gmail.com"
+secret_ref = "gmail-imap-smtp"
+auth_mode = "oauth2"
+
+[accounts.imap]
+host = "imap.gmail.com"
+port = 993
+tls = true
+
+[accounts.smtp]
+host = "smtp.gmail.com"
+port = 465
+tls = true
+
+[accounts.outbound_policy]
+allowed_recipients = ["test-recipient@example.net"]
+attachment_root = "/Users/YOU/Documents/Mail Attachments"

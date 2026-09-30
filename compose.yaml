@@ -1,0 +1,22 @@
+services:
+  personal-mail-mcp:
+    build: .
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      PERSONAL_MAIL_MCP_CONFIG: /config/config.toml
+      PERSONAL_MAIL_MCP_TOKEN: ${PERSONAL_MAIL_MCP_TOKEN:?set a 32+ character bearer token}
+      PERSONAL_MAIL_MCP_STATE_DIR: /state
+    volumes:
+      - ${PERSONAL_MAIL_MCP_CONFIG_FILE:?set the absolute config file path}:/config/config.toml:ro
+      - personal-mail-state:/state
+    secrets:
+      - source: gmail-imap-smtp
+        target: gmail-imap-smtp
+
+secrets:
+  gmail-imap-smtp:
+    file: ${PERSONAL_MAIL_MCP_GMAIL_SECRET_FILE:?set the absolute secret-file path}
+
+volumes:
+  personal-mail-state:

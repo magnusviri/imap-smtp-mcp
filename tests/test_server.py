@@ -6,7 +6,13 @@ import anyio
 from mcp import Client
 from personal_mail_mcp import server as server_module
 from personal_mail_mcp.manifest import check_manifest, write_manifest
-from personal_mail_mcp.server import SERVER_INSTRUCTIONS, SERVER_NAME, create_server
+from personal_mail_mcp.server import (
+    SERVER_INSTRUCTIONS,
+    SERVER_NAME,
+    BearerAuthMiddleware,
+    create_server,
+)
+from starlette.testclient import TestClient
 
 EXPECTED_TOOLS = {
     "list_accounts",
@@ -56,6 +62,16 @@ def test_server_initializes_over_in_memory_transport() -> None:
             assert client.instructions == SERVER_INSTRUCTIONS
 
     anyio.run(initialize)
+
+
+def test_http_transport_rejects_missing_bearer_token() -> None:
+    app = create_server().streamable_http_app(host="127.0.0.1")
+    app.add_middleware(BearerAuthMiddleware, token="x" * 32)
+
+    response = TestClient(app).post("/mcp", content=b"{}")
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_live_catalog_has_unique_complete_schemas_and_annotations() -> None:
@@ -132,20 +148,28 @@ def test_checked_in_manifest_is_fresh() -> None:
     assert check_manifest()
 
 
-def test_packaged_executable_starts_stdio_only(monkeypatch) -> None:
+def test_packaged_executable_starts_authenticated_loopback_http(monkeypatch) -> None:
     calls = []
 
     class Runner:
-        def run(self, *, transport):
-            calls.append(transport)
+        def streamable_http_app(self, **kwargs):
+            calls.append(kwargs)
+            return type("App", (), {"add_middleware": lambda *args, **kwargs: None})()
 
     monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
     monkeypatch.setattr(server_module, "create_server", Runner)
     monkeypatch.delenv("PERSONAL_MAIL_MCP_CONFIG", raising=False)
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_TOKEN", "x" * 32)
+    monkeypatch.setattr(
+        server_module.uvicorn, "run", lambda app, **kwargs: calls.append(kwargs)
+    )
 
     server_module.main()
 
-    assert calls == ["stdio"]
+    assert calls == [
+        {"streamable_http_path": "/mcp", "host": "127.0.0.1"},
+        {"host": "127.0.0.1", "port": 8787, "log_level": "warning"},
+    ]
 
 
 def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
@@ -153,16 +177,21 @@ def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
     calls = []
 
     class Runner:
-        def run(self, *, transport):
-            calls.append(transport)
+        def streamable_http_app(self, **kwargs):
+            calls.append(kwargs)
+            return type("App", (), {"add_middleware": lambda *args, **kwargs: None})()
 
     monkeypatch.setenv("PERSONAL_MAIL_MCP_CONFIG", "/private/config.toml")
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_TOKEN", "x" * 32)
     monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
     monkeypatch.setattr(server_module, "load_config", lambda path: ("config", path))
     monkeypatch.setattr(
         server_module,
         "create_configured_executor",
         lambda config: configured if config[0] == "config" else None,
+    )
+    monkeypatch.setattr(
+        server_module.uvicorn, "run", lambda app, **kwargs: calls.append(kwargs)
     )
     monkeypatch.setattr(
         server_module,
@@ -172,4 +201,4 @@ def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
 
     server_module.main()
 
-    assert calls == ["stdio"]
+    assert calls[-1] == {"host": "127.0.0.1", "port": 8787, "log_level": "warning"}

@@ -55,6 +55,7 @@ class EndpointSettings:
     host: str
     port: int
     tls: bool
+    starttls: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ class ImapSmtpAccount:
     secret_ref: SecretReference
     imap: EndpointSettings
     smtp: EndpointSettings
+    auth_mode: Literal["password", "oauth2"] = "password"
     outbound_policy: OutboundPolicySettings = field(
         default_factory=OutboundPolicySettings
     )
@@ -230,6 +232,9 @@ def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
                     secret_ref=SecretReference(
                         _required_string(data, "secret_ref", account_id)
                     ),
+                    auth_mode=_parse_auth_mode(
+                        data.get("auth_mode", "password"), account_id
+                    ),
                     imap=_parse_endpoint(data.get("imap"), account_id, "imap"),
                     smtp=_parse_endpoint(data.get("smtp"), account_id, "smtp"),
                     **common,
@@ -241,6 +246,14 @@ def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
                 "expected 'apple-mail' or 'imap-smtp'."
             )
     return PersonalMailConfig(server=server, accounts=tuple(accounts))
+
+
+def _parse_auth_mode(value: Any, account_id: str) -> Literal["password", "oauth2"]:
+    if value in ("password", "oauth2"):
+        return value
+    raise ConfigurationError(
+        f"Account {account_id!r} auth_mode must be 'password' or 'oauth2'."
+    )
 
 
 def _parse_server(data: Mapping[str, Any]) -> ServerSettings:
@@ -268,7 +281,16 @@ def _parse_endpoint(value: Any, account_id: str, name: str) -> EndpointSettings:
     tls = data.get("tls")
     if not isinstance(tls, bool):
         raise ConfigurationError(f"Account {account_id!r} {name}.tls must be boolean.")
-    return EndpointSettings(host=host, port=port, tls=tls)
+    starttls = data.get("starttls", False)
+    if not isinstance(starttls, bool):
+        raise ConfigurationError(
+            f"Account {account_id!r} {name}.starttls must be boolean."
+        )
+    if starttls and not tls:
+        raise ConfigurationError(
+            f"Account {account_id!r} {name}.starttls requires tls = true."
+        )
+    return EndpointSettings(host=host, port=port, tls=tls, starttls=starttls)
 
 
 def _parse_outbound_policy(value: Any, account_id: str) -> OutboundPolicySettings:

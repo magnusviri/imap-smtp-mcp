@@ -67,6 +67,15 @@ def test_valid_configuration_builds_typed_accounts(
     assert work.mailboxes == ("INBOX", "Archive")
 
 
+def test_oauth2_auth_mode_is_validated(valid_config: dict[str, object]) -> None:
+    valid_config["accounts"][1]["auth_mode"] = "oauth2"  # type: ignore[index]
+    assert parse_config(valid_config).account("work").auth_mode == "oauth2"  # type: ignore[union-attr]
+
+    valid_config["accounts"][1]["auth_mode"] = "plain"  # type: ignore[index]
+    with pytest.raises(ConfigurationError, match="auth_mode"):
+        parse_config(valid_config)
+
+
 def test_outbound_policy_configuration_is_typed(valid_config) -> None:
     raw = copy.deepcopy(valid_config)
     raw["accounts"][1]["outbound_policy"] = {
@@ -142,7 +151,16 @@ tls = true
     assert config.accounts[0].id == "personal"
 
 
-@pytest.mark.parametrize("name", ["apple-mail.toml", "imap-smtp.toml"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "apple-mail.toml",
+        "imap-smtp.toml",
+        "gmail.toml",
+        "icloud.toml",
+        "outlook.com.toml",
+    ],
+)
 def test_documented_example_configuration_is_valid(name: str) -> None:
     examples = Path(__file__).parents[1] / "examples"
 

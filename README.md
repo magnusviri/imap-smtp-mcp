@@ -2,8 +2,8 @@
 
 `personal-mail-mcp` is a private, single-user MCP server that lets a local
 Codex client read and send mail through either macOS Mail.app or generic
-IMAP/SMTP. It communicates over stdio only; it does not open a network listener
-or proxy a hosted mail service.
+IMAP/SMTP. It communicates only through an authenticated Streamable HTTP
+endpoint bound to loopback; it is not a hosted mail relay.
 
 Email and attachment content is untrusted data. Search results contain compact
 previews of at most 240 characters, full bodies are available only through
@@ -29,8 +29,9 @@ uv sync --project python/personal-mail-mcp --locked
 uv run --project python/personal-mail-mcp personal-mail-mcp-check-manifest
 ```
 
-The server command uses stdout only for MCP protocol messages. Structured,
-redacted diagnostics go to stderr.
+The server binds only to `127.0.0.1` by default and rejects non-loopback hosts.
+Every request requires a bearer token; structured, redacted diagnostics go to
+stderr.
 
 ## Create and validate the configuration
 
@@ -47,9 +48,29 @@ personal-mail-mcp-validate "$HOME/.config/personal-mail-mcp/config.toml"
 
 The validator parses policy and account settings but deliberately does not
 resolve credentials, connect to a provider, or read mail. The checked-in
-[`apple-mail.toml`](examples/apple-mail.toml) and
-[`imap-smtp.toml`](examples/imap-smtp.toml) examples are loaded by the automated
-test suite so they cannot silently drift from the parser.
+[`apple-mail.toml`](examples/apple-mail.toml),
+[`imap-smtp.toml`](examples/imap-smtp.toml), and the provider presets below are
+loaded by the automated test suite so they cannot silently drift from the parser.
+
+### Provider presets
+
+| Service | Example | IMAP | SMTP | Authentication note |
+| --- | --- | --- | --- | --- |
+| Gmail | [`gmail.toml`](examples/gmail.toml) | `imap.gmail.com:993` (TLS) | `smtp.gmail.com:465` (TLS) | Uses OAuth2/XOAUTH2; store a current access token in Keychain. |
+| iCloud Mail | [`icloud.toml`](examples/icloud.toml) | `imap.mail.me.com:993` (TLS) | `smtp.mail.me.com:587` (STARTTLS) | Generate and store an Apple app-specific password. |
+| Outlook.com | [`outlook.com.toml`](examples/outlook.com.toml) | `outlook.office365.com:993` (TLS) | `smtp-mail.outlook.com:587` (STARTTLS) | Uses OAuth2/XOAUTH2; store a current access token in Keychain. |
+
+For Gmail, IMAP access is enabled by default; Google recommends OAuth and app
+passwords only for clients that cannot use it. Outlook.com IMAP access must be
+enabled in **Settings > Mail > Forwarding and IMAP** before use. These provider
+settings were checked against the linked provider documentation on 2026-09-30.
+
+Set `auth_mode = "oauth2"` to authenticate the IMAP and SMTP connections with
+SASL XOAUTH2. In that mode, `secret_ref` identifies a Keychain entry containing
+only the current OAuth2 access token. The server never writes a token to TOML,
+logs, or MCP output. It does not yet run an interactive authorization-code flow
+or refresh tokens, so use a token-management tool that renews the Keychain item
+before its provider expiry.
 
 Every account declares stable ID, sender addresses, and visible mailboxes.
 Sender addresses and account IDs must be unique across the file. Plaintext
@@ -111,27 +132,93 @@ separate from Keychain. The append-only audit log records timestamps, action,
 account, idempotency key, and hashes of recipients, subject, and provider result;
 it never records credentials or message bodies.
 
-## Connect Codex over stdio
+## Run and connect Codex over HTTP
 
-Find the absolute installed executable with `command -v personal-mail-mcp`, then
-add the following to `~/.codex/config.toml`, replacing both example paths:
+Create a bearer token and save it in a private environment file outside the
+repository. Start the service from a terminal (or your process supervisor):
+
+```console
+export PERSONAL_MAIL_MCP_CONFIG="$HOME/.config/personal-mail-mcp/config.toml"
+export PERSONAL_MAIL_MCP_TOKEN="$(openssl rand -hex 32)"
+export PERSONAL_MAIL_MCP_HOST="127.0.0.1"
+export PERSONAL_MAIL_MCP_PORT="8787"
+personal-mail-mcp
+```
+
+Keep that terminal or service running, then add the following to
+`~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.personal_mail]
-command = "/Users/YOU/.local/bin/personal-mail-mcp"
+url = "http://127.0.0.1:8787/mcp"
 required = true
 default_tools_approval_mode = "writes"
-env = { PERSONAL_MAIL_MCP_CONFIG = "/Users/YOU/.config/personal-mail-mcp/config.toml" }
+bearer_token_env_var = "PERSONAL_MAIL_MCP_TOKEN"
 ```
 
-This follows Codex's documented stdio MCP configuration using `command` and
-`env`. The environment contains only a path, not a password or token. Codex CLI
-and the IDE extension share this configuration; restart the client after
-editing it and verify discovery with:
+The Codex process must have the same `PERSONAL_MAIL_MCP_TOKEN` environment
+variable, but the token must not be placed in `config.toml`. Codex CLI and the
+IDE extension share this configuration; restart the client after editing it and
+verify discovery with:
 
 ```console
 codex mcp list
 ```
+
+## Run in Docker
+
+The container serves only generic `imap-smtp` accounts. It cannot use macOS
+Mail.app or macOS Keychain. Instead, mount one credential per `secret_ref` as a
+read-only Docker secret; the secret filename must exactly equal `secret_ref`.
+The included Compose file publishes the container port only to host loopback.
+Codex CLI must run on this same Mac: a hosted or remote Codex environment cannot
+reach your Mac's `127.0.0.1`.
+
+First create a generic provider configuration, not an Apple Mail configuration:
+
+```console
+mkdir -p "$HOME/.config/personal-mail-mcp"
+cp /absolute/path/to/personal-mail-mcp/examples/gmail.toml \
+  "$HOME/.config/personal-mail-mcp/config.toml"
+chmod 600 "$HOME/.config/personal-mail-mcp/config.toml"
+```
+
+Edit `config.toml` to replace `you@gmail.com`, restrict
+`allowed_recipients` to an address you control, and remove `attachment_root`
+unless you deliberately mount an attachments directory into the container.
+For Gmail, the secret file contains a current OAuth access token. For a
+password-style provider, it contains that provider's app password.
+
+```console
+umask 077
+printf '%s' 'PASTE_CURRENT_OAUTH_ACCESS_TOKEN_HERE' \
+  > "$HOME/.config/personal-mail-mcp/gmail-imap-smtp.secret"
+openssl rand -hex 32 > "$HOME/.config/personal-mail-mcp/http-token"
+chmod 600 "$HOME/.config/personal-mail-mcp/http-token"
+export PERSONAL_MAIL_MCP_TOKEN="$(< "$HOME/.config/personal-mail-mcp/http-token")"
+export PERSONAL_MAIL_MCP_CONFIG_FILE="$HOME/.config/personal-mail-mcp/config.toml"
+export PERSONAL_MAIL_MCP_GMAIL_SECRET_FILE="$HOME/.config/personal-mail-mcp/gmail-imap-smtp.secret"
+chmod 600 "$PERSONAL_MAIL_MCP_GMAIL_SECRET_FILE"
+docker compose -f /absolute/path/to/personal-mail-mcp/compose.yaml up --build
+```
+
+Keep Compose running. In a second terminal, export the same bearer token and
+register the HTTP MCP server with Codex:
+
+```console
+export PERSONAL_MAIL_MCP_TOKEN="$(< "$HOME/.config/personal-mail-mcp/http-token")"
+codex mcp add personal-mail \
+  --url http://127.0.0.1:8787/mcp \
+  --bearer-token-env-var PERSONAL_MAIL_MCP_TOKEN
+codex mcp list
+codex
+```
+
+The Codex registration stores the environment-variable name, not the token.
+Do not use `apple-mail.toml` in the container. For another account, rename the
+Compose secret and its environment variable to match that account's `secret_ref`.
+Start by asking Codex to call `list_accounts`, then `list_mailboxes`; leave real
+recipients out of the allowlist until reads work.
 
 See the official [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 for the current MCP settings.

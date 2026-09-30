@@ -17,6 +17,7 @@ from personal_mail_mcp.outbound_service import (
     SqliteDraftStore,
 )
 from personal_mail_mcp.read_service import ReadService
+from personal_mail_mcp.secrets import FileSecretProvider
 
 READ_TOOLS = {
     "list_accounts",
@@ -54,12 +55,17 @@ def create_configured_executor(
 ) -> ConfiguredExecutor:
     """Build all provider adapters and durable local state from validated config."""
     adapters = {}
+    secrets_directory = os.environ.get("PERSONAL_MAIL_MCP_SECRETS_DIR")
+    secret_provider = (
+        FileSecretProvider(secrets_directory) if secrets_directory else None
+    )
     for account in config.accounts:
         if isinstance(account, AppleMailAccount):
             adapter = AppleMailAdapter(account)
         else:
             adapter = ImapSmtpAdapter(
                 account,
+                secret_provider=secret_provider,
                 keychain_service=config.server.keychain_service,
                 attachment_loader=lambda metadata: Path(metadata.id).read_bytes(),
             )

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -111,3 +112,24 @@ class KeychainSecretProvider:
             capture_output=True,
             text=True,
         )
+
+
+class FileSecretProvider:
+    """Resolve one Docker-secret file per reference from a private directory."""
+
+    def __init__(self, directory: str | Path) -> None:
+        self._directory = Path(directory)
+
+    def resolve(self, reference: SecretReference) -> SecretValue:
+        if Path(reference.name).name != reference.name:
+            raise SecretResolutionError("Secret reference is not a safe file name.")
+        path = self._directory / reference.name
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise OSError
+            value = path.read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError:
+            raise SecretResolutionError(
+                f"Secret file for reference {reference.name!r} was not found or could not be read."
+            ) from None
+        return SecretValue(value)

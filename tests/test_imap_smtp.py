@@ -98,6 +98,10 @@ class FakeImap:
         self.calls.append(("login", username, password))
         return "OK", []
 
+    def authenticate(self, mechanism: str, authobject):
+        self.calls.append(("authenticate", mechanism, authobject(b"")))
+        return "OK", []
+
     def list(self):
         self.calls.append(("list",))
         return "OK", [
@@ -145,6 +149,9 @@ class FakeSmtp:
     def login(self, username: str, password: str):
         self.calls.append(("login", username, password))
 
+    def auth(self, mechanism: str, authobject):
+        self.calls.append(("auth", mechanism, authobject()))
+
     def send_message(self, message, from_addr: str, to_addrs):
         self.sent.append((message, from_addr, list(to_addrs)))
 
@@ -152,7 +159,7 @@ class FakeSmtp:
         self.calls.append(("quit",))
 
 
-def account(*, tls: bool = True) -> ImapSmtpAccount:
+def account(*, tls: bool = True, auth_mode: str = "password") -> ImapSmtpAccount:
     return ImapSmtpAccount(
         id="personal",
         type="imap-smtp",
@@ -162,6 +169,7 @@ def account(*, tls: bool = True) -> ImapSmtpAccount:
         secret_ref=SecretReference("mail-password"),
         imap=EndpointSettings("imap.example.com", 993, tls),
         smtp=EndpointSettings("smtp.example.com", 465, tls),
+        auth_mode=auth_mode,
     )
 
 
@@ -213,6 +221,25 @@ def test_adapter_implements_shared_contracts() -> None:
     assert isinstance(value, DraftStorageAdapter)
     assert isinstance(value, AttachmentAdapter)
     assert isinstance(value, OutboundDeliveryAdapter)
+
+
+def test_oauth2_uses_xoauth2_for_imap_and_smtp() -> None:
+    harness = Harness()
+    adapter = harness.adapter(configured=account(auth_mode="oauth2"))
+
+    run(adapter.list_mailboxes(PageRequest(limit=2), OperationContext(7)))
+    run(adapter.send(draft(), OperationContext(7)))
+
+    assert harness.imap.calls[0] == (
+        "authenticate",
+        "XOAUTH2",
+        b"user=owner@example.com\x01auth=Bearer credential-value\x01\x01",
+    )
+    assert harness.smtp.calls[0] == (
+        "auth",
+        "XOAUTH2",
+        "user=owner@example.com\x01auth=Bearer credential-value\x01\x01",
+    )
 
 
 def test_mailboxes_are_configured_scoped_and_paginated_over_tls() -> None:
