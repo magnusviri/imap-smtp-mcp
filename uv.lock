@@ -396,6 +396,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.dev-dependencies]
@@ -404,7 +405,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mcp", specifier = ">=2.2.0,<3" }]
+requires-dist = [
+    { name = "mcp", specifier = ">=2.2.0,<3" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.2,<3" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.3,<10" }]

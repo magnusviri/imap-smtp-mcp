@@ -4,8 +4,8 @@
 email from a local MCP host. It is an independent Python package and does not
 modify or proxy a hosted mail service.
 
-This initial package contains only the stdio server runtime. Mail accounts and
-tools will be added in later changes.
+This package currently provides the stdio server runtime and validated local
+account configuration. Mail tools will be added in later changes.
 
 ## Requirements
 
@@ -24,6 +24,63 @@ uv run --project python/personal-mail-mcp personal-mail-mcp
 The command uses standard input and standard output exclusively for MCP protocol
 messages. Diagnostics are written to standard error so they cannot corrupt the
 protocol stream.
+
+## Configure accounts
+
+Configuration is TOML and contains server settings plus one or more named
+accounts. Keep it in a user-only readable location (for example,
+`~/.config/personal-mail-mcp/config.toml` with mode `0600`). Every account must
+declare its allowed sender addresses and selected mailboxes explicitly.
+
+An account managed by Mail.app identifies the exact Mail.app account to use:
+
+```toml
+[server]
+request_timeout_seconds = 30
+keychain_service = "personal-mail-mcp"
+
+[[accounts]]
+id = "icloud"
+type = "apple-mail"
+mail_account = "iCloud"
+sender_addresses = ["me@example.com"]
+mailboxes = ["Inbox", "Sent"]
+```
+
+A generic account specifies TLS endpoints and refers to a macOS Keychain item;
+it never stores the credential itself:
+
+```toml
+[[accounts]]
+id = "personal"
+type = "imap-smtp"
+sender_addresses = ["owner@example.com"]
+mailboxes = ["INBOX", "Archive", "Sent"]
+username = "owner@example.com"
+secret_ref = "personal-imap-smtp"
+
+[accounts.imap]
+host = "imap.example.com"
+port = 993
+tls = true
+
+[accounts.smtp]
+host = "smtp.example.com"
+port = 465
+tls = true
+```
+
+Create the referenced generic-password entry without putting its value on the
+command line (the `security` command prompts for it):
+
+```console
+security add-generic-password -U -s personal-mail-mcp -a personal-imap-smtp -w
+```
+
+The `keychain_service` value maps to `-s`, and each account's `secret_ref` maps
+to `-a`. Plaintext fields such as `password`, `token`, or `api_key` are rejected.
+Apple Keychain references can only be resolved on macOS; tests and other secure
+runtimes can inject an implementation of the `SecretProvider` interface.
 
 ## Test
 
