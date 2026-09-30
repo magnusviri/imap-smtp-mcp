@@ -10,6 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "mcp>=2.2.0,<3",
+  "keyring>=25,<26",
+  "keyrings.alt>=5,<6",
   "pydantic>=2.12,<3",
   "uvicorn>=0.30,<1",
   "tomli>=2.2,<3; python_version < '3.11'",
@@ -18,6 +20,7 @@ dependencies = [
 [project.scripts]
 personal-mail-mcp = "personal_mail_mcp.server:main"
 personal-mail-mcp-validate = "personal_mail_mcp.config:validate_main"
+personal-mail-mcp-store-secret = "personal_mail_mcp.secrets:store_main"
 personal-mail-mcp-generate-manifest = "personal_mail_mcp.manifest:generate_main"
 personal-mail-mcp-check-manifest = "personal_mail_mcp.manifest:check_main"
 

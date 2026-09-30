@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import os
+from pathlib import Path
 from typing import Annotated, Any
 
 import uvicorn
@@ -271,7 +272,7 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def _http_settings() -> tuple[str, int, str]:
+def _http_settings() -> tuple[str, int, str, Path, Path]:
     host = os.environ.get("PERSONAL_MAIL_MCP_HOST", "127.0.0.1")
     allow_container_bind = (
         os.environ.get("PERSONAL_MAIL_MCP_ALLOW_CONTAINER_BIND") == "1"
@@ -294,11 +295,17 @@ def _http_settings() -> tuple[str, int, str]:
     token = os.environ.get("PERSONAL_MAIL_MCP_TOKEN", "")
     if len(token) < 32:
         raise SystemExit("PERSONAL_MAIL_MCP_TOKEN must contain at least 32 characters.")
-    return host, port, token
+    cert = Path(os.environ.get("PERSONAL_MAIL_MCP_TLS_CERT_FILE", ""))
+    key = Path(os.environ.get("PERSONAL_MAIL_MCP_TLS_KEY_FILE", ""))
+    if not cert.is_file() or not key.is_file():
+        raise SystemExit(
+            "PERSONAL_MAIL_MCP_TLS_CERT_FILE and PERSONAL_MAIL_MCP_TLS_KEY_FILE must name readable certificate and private-key files."
+        )
+    return host, port, token, cert, key
 
 
 def main() -> None:
-    """Run the personal-mail server over authenticated loopback HTTP."""
+    """Run the personal-mail server over authenticated loopback HTTPS."""
     configure_diagnostics()
     config_path = os.environ.get("PERSONAL_MAIL_MCP_CONFIG")
     executor = None
@@ -307,8 +314,15 @@ def main() -> None:
             executor = create_configured_executor(load_config(config_path))
         except (ConfigurationError, OSError, ValueError) as error:
             raise SystemExit(f"Could not start personal-mail-mcp: {error}") from None
-    host, port, token = _http_settings()
+    host, port, token, cert, key = _http_settings()
     server = create_server(executor) if executor is not None else create_server()
     app = server.streamable_http_app(streamable_http_path="/mcp", host=host)
     app.add_middleware(BearerAuthMiddleware, token=token)
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="warning",
+        ssl_certfile=str(cert),
+        ssl_keyfile=str(key),
+    )

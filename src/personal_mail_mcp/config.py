@@ -16,7 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
     import tomli as tomllib
 
 from personal_mail_mcp.secrets import (
-    KeychainSecretProvider,
+    KeyringAltSecretProvider,
     SecretProvider,
     SecretReference,
     SecretResolutionError,
@@ -132,7 +132,7 @@ class PersonalMailConfig:
             raise ConfigurationError(
                 f"Account {account_id!r} does not use a credential reference."
             )
-        selected_provider = provider or KeychainSecretProvider(
+        selected_provider = provider or KeyringAltSecretProvider(
             self.server.keychain_service
         )
         try:

@@ -37,7 +37,7 @@ from personal_mail_mcp.domain import (
     SearchQuery,
     ThreadReference,
 )
-from personal_mail_mcp.secrets import KeychainSecretProvider, SecretProvider
+from personal_mail_mcp.secrets import KeyringAltSecretProvider, SecretProvider
 
 
 class ImapSmtpError(MailAdapterError):
@@ -204,7 +204,7 @@ class ImapSmtpAdapter:
         attachment_loader: AttachmentLoader | None = None,
     ) -> None:
         self.account = account
-        self._secrets = secret_provider or KeychainSecretProvider(keychain_service)
+        self._secrets = secret_provider or KeyringAltSecretProvider(keychain_service)
         self._imap_factory = imap_factory
         self._smtp_factory = smtp_factory
         self._attachment_loader = attachment_loader

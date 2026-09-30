@@ -18,15 +18,15 @@ Install Python 3.10 or newer and
 command from a repository checkout:
 
 ```console
-uv tool install ./python/personal-mail-mcp
+uv tool install .
 personal-mail-mcp-check-manifest
 ```
 
 For development, keep the package isolated and use its lock file:
 
 ```console
-uv sync --project python/personal-mail-mcp --locked
-uv run --project python/personal-mail-mcp personal-mail-mcp-check-manifest
+uv sync --locked
+uv run personal-mail-mcp-check-manifest
 ```
 
 The server binds only to `127.0.0.1` by default and rejects non-loopback hosts.
@@ -40,7 +40,7 @@ location on macOS and Linux:
 
 ```console
 mkdir -p "$HOME/.config/personal-mail-mcp"
-cp python/personal-mail-mcp/examples/apple-mail.toml \
+cp examples/apple-mail.toml \
   "$HOME/.config/personal-mail-mcp/config.toml"
 chmod 600 "$HOME/.config/personal-mail-mcp/config.toml"
 personal-mail-mcp-validate "$HOME/.config/personal-mail-mcp/config.toml"
@@ -56,9 +56,9 @@ loaded by the automated test suite so they cannot silently drift from the parser
 
 | Service | Example | IMAP | SMTP | Authentication note |
 | --- | --- | --- | --- | --- |
-| Gmail | [`gmail.toml`](examples/gmail.toml) | `imap.gmail.com:993` (TLS) | `smtp.gmail.com:465` (TLS) | Uses OAuth2/XOAUTH2; store a current access token in Keychain. |
+| Gmail | [`gmail.toml`](examples/gmail.toml) | `imap.gmail.com:993` (TLS) | `smtp.gmail.com:465` (TLS) | Uses OAuth2/XOAUTH2; store a current access token in keyrings.alt. |
 | iCloud Mail | [`icloud.toml`](examples/icloud.toml) | `imap.mail.me.com:993` (TLS) | `smtp.mail.me.com:587` (STARTTLS) | Generate and store an Apple app-specific password. |
-| Outlook.com | [`outlook.com.toml`](examples/outlook.com.toml) | `outlook.office365.com:993` (TLS) | `smtp-mail.outlook.com:587` (STARTTLS) | Uses OAuth2/XOAUTH2; store a current access token in Keychain. |
+| Outlook.com | [`outlook.com.toml`](examples/outlook.com.toml) | `outlook.office365.com:993` (TLS) | `smtp-mail.outlook.com:587` (STARTTLS) | Uses OAuth2/XOAUTH2; store a current access token in keyrings.alt. |
 
 For Gmail, IMAP access is enabled by default; Google recommends OAuth and app
 passwords only for clients that cannot use it. Outlook.com IMAP access must be
@@ -66,10 +66,10 @@ enabled in **Settings > Mail > Forwarding and IMAP** before use. These provider
 settings were checked against the linked provider documentation on 2026-09-30.
 
 Set `auth_mode = "oauth2"` to authenticate the IMAP and SMTP connections with
-SASL XOAUTH2. In that mode, `secret_ref` identifies a Keychain entry containing
+SASL XOAUTH2. In that mode, `secret_ref` identifies a keyrings.alt entry containing
 only the current OAuth2 access token. The server never writes a token to TOML,
 logs, or MCP output. It does not yet run an interactive authorization-code flow
-or refresh tokens, so use a token-management tool that renews the Keychain item
+or refresh tokens, so use a token-management tool that renews the keyring item
 before its provider expiry.
 
 Every account declares stable ID, sender addresses, and visible mailboxes.
@@ -88,20 +88,19 @@ Codex application there and retry.
 
 Use `imap-smtp` for a provider with implicit TLS IMAP and SMTP submission. This
 mode connects directly to the configured hosts, restricts access to the listed
-mailboxes, and retrieves the password-like credential from macOS Keychain. Copy
+mailboxes, and retrieves the password-like credential from the encrypted Python
+keyring. Copy
 the generic example, replace its placeholder addresses and hosts, then create
 the referenced generic-password item without putting its value on the command
 line:
 
 ```console
-security add-generic-password -U \
-  -s personal-mail-mcp \
-  -a personal-imap-smtp \
-  -w
+personal-mail-mcp-store-secret personal-imap-smtp \
+  --service personal-mail-mcp
 ```
 
-The command prompts securely. `[server].keychain_service` maps to `-s`, and
-`secret_ref` maps to `-a`. Use a provider-issued app password when MFA requires
+The command prompts securely. `[server].keychain_service` is the keyring service
+name, and `secret_ref` is the keyring username. Use a provider-issued app password when MFA requires
 one. The current adapter supports password-style SMTP/IMAP authentication; an
 OAuth-only provider needs an app password or is not compatible. Keychain-backed
 credential resolution is macOS-only; on other platforms the server returns an
@@ -138,10 +137,14 @@ Create a bearer token and save it in a private environment file outside the
 repository. Start the service from a terminal (or your process supervisor):
 
 ```console
+/absolute/path/to/personal-mail-mcp/scripts/generate-self-signed-cert.sh \
+  "$HOME/.config/personal-mail-mcp/tls"
 export PERSONAL_MAIL_MCP_CONFIG="$HOME/.config/personal-mail-mcp/config.toml"
 export PERSONAL_MAIL_MCP_TOKEN="$(openssl rand -hex 32)"
 export PERSONAL_MAIL_MCP_HOST="127.0.0.1"
 export PERSONAL_MAIL_MCP_PORT="8787"
+export PERSONAL_MAIL_MCP_TLS_CERT_FILE="$HOME/.config/personal-mail-mcp/tls/cert.pem"
+export PERSONAL_MAIL_MCP_TLS_KEY_FILE="$HOME/.config/personal-mail-mcp/tls/key.pem"
 personal-mail-mcp
 ```
 
@@ -150,7 +153,7 @@ Keep that terminal or service running, then add the following to
 
 ```toml
 [mcp_servers.personal_mail]
-url = "http://127.0.0.1:8787/mcp"
+url = "https://127.0.0.1:8787/mcp"
 required = true
 default_tools_approval_mode = "writes"
 bearer_token_env_var = "PERSONAL_MAIL_MCP_TOKEN"
@@ -181,6 +184,8 @@ mkdir -p "$HOME/.config/personal-mail-mcp"
 cp /absolute/path/to/personal-mail-mcp/examples/gmail.toml \
   "$HOME/.config/personal-mail-mcp/config.toml"
 chmod 600 "$HOME/.config/personal-mail-mcp/config.toml"
+/absolute/path/to/personal-mail-mcp/scripts/generate-self-signed-cert.sh \
+  "$HOME/.config/personal-mail-mcp/tls"
 ```
 
 Edit `config.toml` to replace `you@gmail.com`, restrict
@@ -198,6 +203,7 @@ chmod 600 "$HOME/.config/personal-mail-mcp/http-token"
 export PERSONAL_MAIL_MCP_TOKEN="$(< "$HOME/.config/personal-mail-mcp/http-token")"
 export PERSONAL_MAIL_MCP_CONFIG_FILE="$HOME/.config/personal-mail-mcp/config.toml"
 export PERSONAL_MAIL_MCP_GMAIL_SECRET_FILE="$HOME/.config/personal-mail-mcp/gmail-imap-smtp.secret"
+export PERSONAL_MAIL_MCP_TLS_DIR="$HOME/.config/personal-mail-mcp/tls"
 chmod 600 "$PERSONAL_MAIL_MCP_GMAIL_SECRET_FILE"
 docker compose -f /absolute/path/to/personal-mail-mcp/compose.yaml up --build
 ```
@@ -208,13 +214,18 @@ register the HTTP MCP server with Codex:
 ```console
 export PERSONAL_MAIL_MCP_TOKEN="$(< "$HOME/.config/personal-mail-mcp/http-token")"
 codex mcp add personal-mail \
-  --url http://127.0.0.1:8787/mcp \
+  --url https://127.0.0.1:8787/mcp \
   --bearer-token-env-var PERSONAL_MAIL_MCP_TOKEN
 codex mcp list
 codex
 ```
 
 The Codex registration stores the environment-variable name, not the token.
+Because the certificate is self-signed, trust `tls/cert.pem` in your operating
+system before starting Codex. On macOS, import it into the login keychain and
+set it to **Always Trust** in Keychain Access. Do not bypass certificate
+validation. The certificate contains `localhost` and `127.0.0.1` as subject
+alternative names.
 Do not use `apple-mail.toml` in the container. For another account, rename the
 Compose secret and its environment variable to match that account's `secret_ref`.
 Start by asking Codex to call `list_accounts`, then `list_mailboxes`; leave real
@@ -275,9 +286,9 @@ after retaining anything you need; those deletions are not reversible.
 ## Development checks
 
 ```console
-uv run --project python/personal-mail-mcp --python 3.10 pytest -q
-uv run --project python/personal-mail-mcp personal-mail-mcp-check-manifest
-uv build --project python/personal-mail-mcp
+uv run --python 3.10 pytest -q
+uv run personal-mail-mcp-check-manifest
+uv build
 pnpm test
 ```
 

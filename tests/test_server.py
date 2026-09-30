@@ -160,6 +160,9 @@ def test_packaged_executable_starts_authenticated_loopback_http(monkeypatch) -> 
     monkeypatch.setattr(server_module, "create_server", Runner)
     monkeypatch.delenv("PERSONAL_MAIL_MCP_CONFIG", raising=False)
     monkeypatch.setenv("PERSONAL_MAIL_MCP_TOKEN", "x" * 32)
+    monkeypatch.setattr(server_module.Path, "is_file", lambda _: True)
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_CERT_FILE", "/tls/cert.pem")
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_KEY_FILE", "/tls/key.pem")
     monkeypatch.setattr(
         server_module.uvicorn, "run", lambda app, **kwargs: calls.append(kwargs)
     )
@@ -168,7 +171,13 @@ def test_packaged_executable_starts_authenticated_loopback_http(monkeypatch) -> 
 
     assert calls == [
         {"streamable_http_path": "/mcp", "host": "127.0.0.1"},
-        {"host": "127.0.0.1", "port": 8787, "log_level": "warning"},
+        {
+            "host": "127.0.0.1",
+            "port": 8787,
+            "log_level": "warning",
+            "ssl_certfile": "/tls/cert.pem",
+            "ssl_keyfile": "/tls/key.pem",
+        },
     ]
 
 
@@ -183,6 +192,9 @@ def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
 
     monkeypatch.setenv("PERSONAL_MAIL_MCP_CONFIG", "/private/config.toml")
     monkeypatch.setenv("PERSONAL_MAIL_MCP_TOKEN", "x" * 32)
+    monkeypatch.setattr(server_module.Path, "is_file", lambda _: True)
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_CERT_FILE", "/tls/cert.pem")
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_KEY_FILE", "/tls/key.pem")
     monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
     monkeypatch.setattr(server_module, "load_config", lambda path: ("config", path))
     monkeypatch.setattr(
@@ -201,4 +213,10 @@ def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
 
     server_module.main()
 
-    assert calls[-1] == {"host": "127.0.0.1", "port": 8787, "log_level": "warning"}
+    assert calls[-1] == {
+        "host": "127.0.0.1",
+        "port": 8787,
+        "log_level": "warning",
+        "ssl_certfile": "/tls/cert.pem",
+        "ssl_keyfile": "/tls/key.pem",
+    }

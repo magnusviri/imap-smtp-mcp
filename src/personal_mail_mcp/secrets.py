@@ -1,13 +1,13 @@
-"""Secret-provider interfaces and macOS Keychain integration."""
+"""Secret-provider interfaces backed by Python keyring.alt."""
 
 from __future__ import annotations
 
-import subprocess
-import sys
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from getpass import getpass
 from pathlib import Path
 from typing import Protocol
+
+from keyrings.alt.file import EncryptedKeyring
 
 
 class SecretResolutionError(RuntimeError):
@@ -52,66 +52,39 @@ class SecretProvider(Protocol):
     def resolve(self, reference: SecretReference) -> SecretValue: ...
 
 
-CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
+class KeyringAltSecretProvider:
+    """Resolve secrets from the encrypted cross-platform keyrings.alt backend."""
 
-
-class KeychainSecretProvider:
-    """Resolve generic-password entries from the current user's macOS Keychain."""
-
-    def __init__(
-        self,
-        service: str = "personal-mail-mcp",
-        *,
-        platform: str | None = None,
-        runner: CommandRunner | None = None,
-    ) -> None:
+    def __init__(self, service: str = "personal-mail-mcp", *, backend=None) -> None:
         self._service = service
-        self._platform = platform or sys.platform
-        self._runner = runner or self._run_security
+        self._backend = backend or EncryptedKeyring()
 
     def resolve(self, reference: SecretReference) -> SecretValue:
-        if self._platform != "darwin":
-            raise SecretResolutionError(
-                "macOS Keychain references are supported only on macOS. "
-                "Run personal-mail-mcp on macOS or inject a compatible secret provider."
-            )
         try:
-            result = self._runner(
-                [
-                    "security",
-                    "find-generic-password",
-                    "-s",
-                    self._service,
-                    "-a",
-                    reference.name,
-                    "-w",
-                ]
-            )
-        except (OSError, subprocess.SubprocessError):
+            value = self._backend.get_password(self._service, reference.name)
+        except Exception:  # noqa: BLE001 - backend errors can contain secret paths
             raise SecretResolutionError(
-                f"Could not access macOS Keychain entry {reference.name!r}. "
-                "Verify that the security command is available."
+                f"Could not access keyring entry {reference.name!r}."
             ) from None
-        if result.returncode != 0:
-            raise SecretResolutionError(
-                f"macOS Keychain entry {reference.name!r} was not found or could not "
-                "be read. Add it with the documented security command."
-            )
-        value = result.stdout.rstrip("\r\n")
         if not value:
             raise SecretResolutionError(
-                f"macOS Keychain entry {reference.name!r} is empty."
+                f"Keyring entry {reference.name!r} was not found or is empty."
             )
         return SecretValue(value)
 
-    @staticmethod
-    def _run_security(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+
+def store_main() -> None:
+    """Store a secret without passing its value through argv or configuration."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Store a personal-mail secret.")
+    parser.add_argument("reference", help="The config.toml secret_ref value")
+    parser.add_argument("--service", default="personal-mail-mcp")
+    arguments = parser.parse_args()
+    value = getpass("Credential or OAuth access token: ")
+    if not value:
+        raise SystemExit("Credential cannot be empty.")
+    EncryptedKeyring().set_password(arguments.service, arguments.reference, value)
 
 
 class FileSecretProvider:

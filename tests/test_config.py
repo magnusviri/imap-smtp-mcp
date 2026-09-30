@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +15,7 @@ from personal_mail_mcp.config import (
     validate_main,
 )
 from personal_mail_mcp.secrets import (
-    KeychainSecretProvider,
+    KeyringAltSecretProvider,
     SecretReference,
     SecretResolutionError,
     SecretValue,
@@ -262,49 +261,30 @@ def test_secret_value_is_redacted_from_normal_representations() -> None:
     assert value.reveal() == "highly-sensitive"
 
 
-def test_non_macos_keychain_lookup_has_actionable_error() -> None:
-    provider = KeychainSecretProvider(platform="linux")
+def test_missing_keyring_entry_has_actionable_error() -> None:
+    provider = KeyringAltSecretProvider(
+        backend=type("Backend", (), {"get_password": lambda *_: None})()
+    )
 
-    with pytest.raises(SecretResolutionError, match="supported only on macOS"):
+    with pytest.raises(SecretResolutionError, match="was not found"):
         provider.resolve(SecretReference("mail-login"))
 
 
-def test_keychain_command_uses_named_reference_and_redacts_failures() -> None:
-    commands: list[list[str]] = []
+def test_keyring_failures_are_redacted() -> None:
+    class BrokenBackend:
+        def get_password(self, service, username):
+            raise RuntimeError("exposed-secret")
 
-    def failed_runner(command):
-        commands.append(list(command))
-        return subprocess.CompletedProcess(
-            command, returncode=44, stdout="exposed-secret", stderr="exposed-secret"
-        )
-
-    provider = KeychainSecretProvider(
-        "personal-mail-test", platform="darwin", runner=failed_runner
-    )
+    provider = KeyringAltSecretProvider("personal-mail-test", backend=BrokenBackend())
     with pytest.raises(SecretResolutionError) as captured:
         provider.resolve(SecretReference("work-mail"))
 
-    assert commands == [
-        [
-            "security",
-            "find-generic-password",
-            "-s",
-            "personal-mail-test",
-            "-a",
-            "work-mail",
-            "-w",
-        ]
-    ]
     assert "exposed-secret" not in str(captured.value)
 
 
-def test_keychain_resolves_value_into_redacted_wrapper() -> None:
-    def successful_runner(command):
-        return subprocess.CompletedProcess(
-            command, returncode=0, stdout="resolved-credential\n", stderr=""
-        )
-
-    provider = KeychainSecretProvider(platform="darwin", runner=successful_runner)
+def test_keyring_resolves_value_into_redacted_wrapper() -> None:
+    backend = type("Backend", (), {"get_password": lambda *_: "resolved-credential"})()
+    provider = KeyringAltSecretProvider(backend=backend)
 
     resolved = provider.resolve(SecretReference("work-mail"))
 
