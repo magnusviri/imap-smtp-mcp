@@ -10,11 +10,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "mcp>=2.2.0,<3",
+  "pydantic>=2.12,<3",
   "tomli>=2.2,<3; python_version < '3.11'",
 ]
 
 [project.scripts]
 personal-mail-mcp = "personal_mail_mcp.server:main"
+personal-mail-mcp-generate-manifest = "personal_mail_mcp.manifest:generate_main"
+personal-mail-mcp-check-manifest = "personal_mail_mcp.manifest:check_main"
 
 [dependency-groups]
 dev = [

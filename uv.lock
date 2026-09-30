@@ -396,6 +396,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
@@ -407,6 +408,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2.2.0,<3" },
+    { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.2,<3" },
 ]
 

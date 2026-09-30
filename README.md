@@ -4,8 +4,9 @@
 email from a local MCP host. It is an independent Python package and does not
 modify or proxy a hosted mail service.
 
-This package currently provides the stdio server runtime and validated local
-account configuration. Mail tools will be added in later changes.
+This package provides the stdio server runtime, validated local account
+configuration, and the typed public tool catalog. Provider integrations are
+added independently behind the runtime's service boundary.
 
 ## Requirements
 
@@ -24,6 +25,14 @@ uv run --project python/personal-mail-mcp personal-mail-mcp
 The command uses standard input and standard output exclusively for MCP protocol
 messages. Diagnostics are written to standard error so they cannot corrupt the
 protocol stream.
+
+The checked-in MCP manifest is generated directly from the runtime schemas.
+Regenerate it after changing a tool contract, and use the check command in CI:
+
+```console
+uv run --project python/personal-mail-mcp personal-mail-mcp-generate-manifest
+uv run --project python/personal-mail-mcp personal-mail-mcp-check-manifest
+```
 
 ## Configure accounts
 
