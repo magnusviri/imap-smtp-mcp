@@ -8,6 +8,7 @@ import anyio
 import pytest
 from mcp import Client
 from mcp.server.mcpserver.exceptions import ToolError
+
 from personal_mail_mcp.config import parse_config
 from personal_mail_mcp.domain import AccountSummary, ImapMessageId
 from personal_mail_mcp.fake_adapter import FakeMailAdapter

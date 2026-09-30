@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
 from personal_mail_mcp.adapters import (
     AttachmentAdapter,
     DraftStorageAdapter,

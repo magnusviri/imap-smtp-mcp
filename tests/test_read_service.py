@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import anyio
 from mcp import Client
+
 from personal_mail_mcp.domain import (
     AccountSummary,
     Attachment,

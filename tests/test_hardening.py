@@ -7,6 +7,7 @@ from pathlib import Path
 import anyio
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+
 from personal_mail_mcp.diagnostics import StructuredDiagnosticFormatter
 from personal_mail_mcp.domain import AccountSummary, DeliveryResult
 from personal_mail_mcp.fake_adapter import FakeMailAdapter

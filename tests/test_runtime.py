@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import anyio
 import pytest
+
 from personal_mail_mcp.runtime import ConfiguredExecutor, default_state_directory
 
 

@@ -4,6 +4,8 @@ import json
 
 import anyio
 from mcp import Client
+from starlette.testclient import TestClient
+
 from personal_mail_mcp import server as server_module
 from personal_mail_mcp.manifest import check_manifest, write_manifest
 from personal_mail_mcp.server import (
@@ -12,7 +14,6 @@ from personal_mail_mcp.server import (
     BearerAuthMiddleware,
     create_server,
 )
-from starlette.testclient import TestClient
 
 EXPECTED_TOOLS = {
     "list_accounts",

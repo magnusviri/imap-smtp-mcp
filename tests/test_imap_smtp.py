@@ -11,6 +11,7 @@ from email.message import EmailMessage
 from threading import Event
 
 import pytest
+
 from personal_mail_mcp.adapters import (
     AttachmentAdapter,
     DraftStorageAdapter,

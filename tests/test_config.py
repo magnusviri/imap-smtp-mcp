@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
 from personal_mail_mcp.config import (
     AppleMailAccount,
     ConfigurationError,
