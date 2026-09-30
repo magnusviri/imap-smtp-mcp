@@ -4,6 +4,7 @@ import json
 
 import anyio
 from mcp import Client
+from personal_mail_mcp import server as server_module
 from personal_mail_mcp.manifest import check_manifest, write_manifest
 from personal_mail_mcp.server import SERVER_INSTRUCTIONS, SERVER_NAME, create_server
 
@@ -129,3 +130,18 @@ def test_manifest_is_generated_from_catalog_and_detects_staleness(tmp_path) -> N
 
 def test_checked_in_manifest_is_fresh() -> None:
     assert check_manifest()
+
+
+def test_packaged_executable_starts_stdio_only(monkeypatch) -> None:
+    calls = []
+
+    class Runner:
+        def run(self, *, transport):
+            calls.append(transport)
+
+    monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
+    monkeypatch.setattr(server_module, "create_server", Runner)
+
+    server_module.main()
+
+    assert calls == ["stdio"]

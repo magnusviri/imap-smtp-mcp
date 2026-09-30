@@ -8,6 +8,8 @@ import json
 import mimetypes
 import os
 import sqlite3
+import stat
+import tempfile
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -43,6 +45,7 @@ class OutboundPolicy:
     sender_addresses: tuple[str, ...]
     allowed_recipients: tuple[str, ...] = ()
     allowed_recipient_domains: tuple[str, ...] = ()
+    attachment_root: Path | None = None
     max_attachment_bytes: int = 10 * 1024 * 1024
     rate_limit_messages: int = 20
     rate_limit_window_seconds: int = 3600
@@ -63,6 +66,7 @@ class OutboundPolicy:
             sender_addresses=account.sender_addresses,
             allowed_recipients=configured.allowed_recipients,
             allowed_recipient_domains=configured.allowed_recipient_domains,
+            attachment_root=configured.attachment_root,
             max_attachment_bytes=configured.max_attachment_bytes,
             rate_limit_messages=configured.rate_limit_messages,
             rate_limit_window_seconds=configured.rate_limit_window_seconds,
@@ -204,10 +208,11 @@ class GuardedOutboundService:
         return await self._deliver(tool_name, arguments)
 
     def _create_draft(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        account_id, _adapter, _policy = self._account(arguments)
+        account_id, _adapter, policy = self._account(arguments)
         draft = self._draft(
             account_id,
             arguments.get("content"),
+            policy=policy,
             reply_to=self._source(arguments.get("reply_to_message_id"), account_id),
             forward_of=self._source(arguments.get("forward_of_message_id"), account_id),
         )
@@ -240,6 +245,7 @@ class GuardedOutboundService:
             draft = self._draft(
                 account_id,
                 arguments.get("content"),
+                policy=policy,
                 reply_to=source if action == "reply_to_message" else None,
                 forward_of=source if action == "forward_message" else None,
             )
@@ -266,12 +272,19 @@ class GuardedOutboundService:
 
             context = OperationContext(self._timeout_seconds)
             try:
-                if draft.reply_to is not None:
-                    result = await adapter.reply(draft.reply_to, draft, context)
-                elif draft.forward_of is not None:
-                    result = await adapter.forward(draft.forward_of, draft, context)
-                else:
-                    result = await adapter.send(draft, context)
+                with _MaterializedDraft(draft, policy) as delivery_draft:
+                    if draft.reply_to is not None:
+                        result = await adapter.reply(
+                            draft.reply_to, delivery_draft, context
+                        )
+                    elif draft.forward_of is not None:
+                        result = await adapter.forward(
+                            draft.forward_of, delivery_draft, context
+                        )
+                    else:
+                        result = await adapter.send(delivery_draft, context)
+            except ToolError:
+                raise
             except MailAdapterError as error:
                 raise ToolError(str(error)) from None
             except Exception:  # noqa: BLE001
@@ -306,6 +319,7 @@ class GuardedOutboundService:
         account_id: str,
         content: Any,
         *,
+        policy: OutboundPolicy,
         reply_to: MessageId | None = None,
         forward_of: MessageId | None = None,
     ) -> Draft:
@@ -313,7 +327,8 @@ class GuardedOutboundService:
             raise ToolError("Draft content is required.")
         try:
             attachments = tuple(
-                _attachment(path) for path in content.get("attachment_paths", ())
+                _attachment(path, policy.attachment_root)
+                for path in content.get("attachment_paths", ())
             )
             return Draft(
                 id=self._id_factory(),
@@ -368,17 +383,8 @@ class GuardedOutboundService:
                 raise ToolError(
                     "A recipient is not permitted by the account allowlist."
                 )
-        total = 0
-        for attachment in draft.attachments:
-            try:
-                current_size = Path(attachment.id).stat().st_size
-            except OSError:
-                raise ToolError("An attachment is unavailable at send time.") from None
-            if current_size != attachment.size_bytes:
-                raise ToolError("An attachment changed after the draft was created.")
-            total += current_size
-        if total > policy.max_attachment_bytes:
-            raise ToolError("Attachments exceed the configured combined size limit.")
+        if draft.attachments and policy.attachment_root is None:
+            raise ToolError("Local attachments require a configured attachment_root.")
 
 
 def _participants(values: Any) -> tuple[Participant, ...]:
@@ -401,17 +407,175 @@ def _body(value: Any) -> BodyVariants:
     return BodyVariants(text=value.get("text"), html=value.get("html"))
 
 
-def _attachment(value: Any) -> AttachmentMetadata:
+def _attachment(value: Any, root: Path | None) -> AttachmentMetadata:
     if not isinstance(value, str) or not value:
         raise ValueError
-    path = Path(value)
+    if root is None:
+        raise ValueError
+    path, relative = _attachment_path(value, root)
     size = path.stat().st_size
     return AttachmentMetadata(
-        id=str(path),
+        id=relative.as_posix(),
         filename=path.name,
         media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
         size_bytes=size,
     )
+
+
+def _attachment_path(value: str, root: Path) -> tuple[Path, Path]:
+    """Resolve one visible regular file below a non-symlink configured root."""
+    configured_root = root.expanduser()
+    if not configured_root.is_absolute():
+        raise ValueError
+    resolved_root = configured_root.resolve(strict=True)
+    if configured_root.is_symlink() or not resolved_root.is_dir():
+        raise ValueError
+    supplied = Path(value).expanduser()
+    candidate = supplied if supplied.is_absolute() else configured_root / supplied
+    try:
+        relative = candidate.relative_to(configured_root)
+    except ValueError:
+        raise ValueError from None
+    if not relative.parts or any(
+        part in {".", ".."} or part.startswith(".") for part in relative.parts
+    ):
+        raise ValueError
+    current = configured_root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError
+    resolved = candidate.resolve(strict=True)
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError:
+        raise ValueError from None
+    if not resolved.is_file():
+        raise ValueError
+    return resolved, relative
+
+
+class _MaterializedDraft:
+    """Securely snapshot attachments only for the duration of provider delivery."""
+
+    def __init__(self, draft: Draft, policy: OutboundPolicy) -> None:
+        self._draft = draft
+        self._policy = policy
+        self._temporary: tempfile.TemporaryDirectory[str] | None = None
+
+    def __enter__(self) -> Draft:
+        if not self._draft.attachments:
+            return self._draft
+        root = self._policy.attachment_root
+        if root is None:
+            raise ToolError("Local attachments require a configured attachment_root.")
+        self._temporary = tempfile.TemporaryDirectory(prefix="personal-mail-")
+        os.chmod(self._temporary.name, 0o700)
+        materialized: list[AttachmentMetadata] = []
+        total = 0
+        try:
+            for index, metadata in enumerate(self._draft.attachments):
+                remaining = self._policy.max_attachment_bytes - total
+                content = _secure_read(root, metadata.id, remaining)
+                if len(content) != metadata.size_bytes:
+                    raise ToolError(
+                        "An attachment changed after the draft was created."
+                    )
+                total += len(content)
+                if total > self._policy.max_attachment_bytes:
+                    raise ToolError(
+                        "Attachments exceed the configured combined size limit."
+                    )
+                target = Path(self._temporary.name) / f"{index}-{metadata.filename}"
+                descriptor = os.open(
+                    target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                )
+                try:
+                    view = memoryview(content)
+                    while view:
+                        written = os.write(descriptor, view)
+                        view = view[written:]
+                finally:
+                    os.close(descriptor)
+                materialized.append(
+                    AttachmentMetadata(
+                        id=str(target),
+                        filename=metadata.filename,
+                        media_type=metadata.media_type,
+                        size_bytes=len(content),
+                        inline=metadata.inline,
+                        content_id=metadata.content_id,
+                    )
+                )
+        except Exception:
+            self.__exit__(None, None, None)
+            raise
+        return Draft(
+            id=self._draft.id,
+            account_id=self._draft.account_id,
+            sender=self._draft.sender,
+            to=self._draft.to,
+            cc=self._draft.cc,
+            bcc=self._draft.bcc,
+            subject=self._draft.subject,
+            body=self._draft.body,
+            created_at=self._draft.created_at,
+            reply_to_address=self._draft.reply_to_address,
+            reply_to=self._draft.reply_to,
+            forward_of=self._draft.forward_of,
+            attachments=tuple(materialized),
+        )
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._temporary is not None:
+            self._temporary.cleanup()
+
+
+def _secure_read(root: Path, relative_value: str, max_bytes: int) -> bytes:
+    """Open every path component without following symlinks."""
+    relative = Path(relative_value)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {".", ".."} or part.startswith(".") for part in relative.parts)
+    ):
+        raise ToolError("An attachment path is outside the configured file root.")
+    descriptors: list[int] = []
+    try:
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(descriptor)
+        for part in relative.parts[:-1]:
+            descriptor = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
+            descriptors.append(descriptor)
+        file_descriptor = os.open(
+            relative.parts[-1],
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=descriptor,
+        )
+        descriptors.append(file_descriptor)
+        if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+            raise OSError
+        chunks: list[bytes] = []
+        byte_count = 0
+        while chunk := os.read(file_descriptor, 1024 * 1024):
+            byte_count += len(chunk)
+            if byte_count > max_bytes:
+                raise ToolError(
+                    "Attachments exceed the configured combined size limit."
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OSError:
+        raise ToolError(
+            "An attachment is unavailable or unsafe at send time."
+        ) from None
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def _delivery(result: DeliveryResult, key: str) -> dict[str, Any]:

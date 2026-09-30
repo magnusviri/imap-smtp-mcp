@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import Awaitable, Mapping
 from datetime import datetime
 from typing import Any, TypeVar
@@ -29,6 +30,9 @@ from personal_mail_mcp.domain import (
 
 MAX_PREVIEW_CHARS = 240
 MAX_INLINE_ATTACHMENT_BYTES = 1024 * 1024
+_MEDIA_TYPE_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+)
 _MAILBOX_SCAN_PAGE_SIZE = 100
 _READ_TOOLS = {
     "list_accounts",
@@ -153,6 +157,7 @@ class ReadService:
             attachment_adapter.get_attachment(message_id, attachment_id, context),
             "retrieve the attachment",
         )
+        self._validate_attachment(attachment.metadata, attachment_id)
         if attachment.metadata.size_bytes > self._max_inline_attachment_bytes:
             raise ToolError(
                 "Attachment is too large to return inline "
@@ -163,6 +168,19 @@ class ReadService:
             "content_base64": base64.b64encode(attachment.content).decode("ascii"),
             "download_path": None,
         }
+
+    @staticmethod
+    def _validate_attachment(metadata: AttachmentMetadata, requested_id: str) -> None:
+        if metadata.id != requested_id:
+            raise ToolError("The mail provider returned a different attachment.")
+        if not _MEDIA_TYPE_RE.fullmatch(metadata.media_type):
+            raise ToolError("The attachment has invalid MIME metadata.")
+        if metadata.filename is not None and (
+            "/" in metadata.filename
+            or "\\" in metadata.filename
+            or any(ord(character) < 32 for character in metadata.filename)
+        ):
+            raise ToolError("The attachment has invalid MIME metadata.")
 
     async def _list_accounts(self) -> dict[str, Any]:
         accounts = []

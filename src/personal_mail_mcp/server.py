@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-import sys
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
@@ -11,6 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from personal_mail_mcp.diagnostics import configure_diagnostics
 from personal_mail_mcp.tool_contract import (
     AccountsResult,
     AttachmentResult,
@@ -245,5 +244,5 @@ def create_server(executor: ToolExecutor | None = None) -> MCPServer:
 
 def main() -> None:
     """Run the personal-mail server over the MCP stdio transport."""
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    configure_diagnostics()
     create_server().run(transport="stdio")

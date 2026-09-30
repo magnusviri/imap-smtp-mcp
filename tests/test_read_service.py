@@ -213,6 +213,41 @@ def test_attachment_limit_is_enforced_without_a_download_write() -> None:
     anyio.run(exercise)
 
 
+class InvalidAttachmentAdapter(FakeMailAdapter):
+    async def get_attachment(self, message_id, attachment_id, context):
+        del message_id, attachment_id, context
+        return Attachment(
+            AttachmentMetadata("note", "../private.txt", "not a mime type", 4),
+            b"data",
+        )
+
+
+def test_inbound_attachment_mime_metadata_is_validated() -> None:
+    source = _adapter()
+    adapter = InvalidAttachmentAdapter(
+        account=source.account,
+        mailboxes=source.mailboxes,
+        messages=source.messages,
+    )
+    service = ReadService(
+        {"personal": adapter}, attachment_adapters={"personal": adapter}
+    )
+
+    async def exercise() -> None:
+        async with Client(create_server(service)) as client:
+            result = await client.call_tool(
+                "get_attachment",
+                {
+                    "account_id": "personal",
+                    "message_id": adapter.messages[0].summary.id.serialize(),
+                    "attachment_id": "note",
+                },
+            )
+        assert "invalid MIME metadata" in _error_text(result)
+
+    anyio.run(exercise)
+
+
 class FailingAdapter(FakeMailAdapter):
     async def get_message(self, message_id, context):
         del message_id, context

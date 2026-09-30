@@ -87,6 +87,7 @@ tls = true
 [accounts.outbound_policy]
 allowed_recipients = ["family@example.net"]
 allowed_recipient_domains = ["example.org"]
+attachment_root = "/Users/owner/Documents/Mail Attachments"
 max_attachment_bytes = 10485760
 rate_limit_messages = 20
 rate_limit_window_seconds = 3600
@@ -98,6 +99,17 @@ and forwarding all require `confirm_send = true` and a caller-generated
 idempotency key. The same key returns the original delivery result on retry
 without sending another message. Per-account sender ownership, attachment-size,
 and rate-limit checks run before provider delivery.
+
+Local attachment paths are disabled unless `attachment_root` is an explicit
+absolute directory. Files must stay beneath that root; hidden files, traversal,
+and symlinks are rejected. Attachment bytes are opened without following
+symlinks, checked against the combined decoded-size limit, and copied into a
+private short-lived delivery snapshot only when a confirmed send begins.
+
+The packaged executable exposes stdio only and never starts an HTTP listener,
+so it cannot become a network-accessible mail relay. Diagnostics are structured
+on stderr and redact secrets, addresses, message bodies, attachment data, and
+local paths.
 
 Draft content can be kept in a user-only SQLite file through the local draft
 store. Keep this file separate from the operating-system credential store. The

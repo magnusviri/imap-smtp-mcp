@@ -180,6 +180,7 @@ def test_confirmation_attachment_limit_and_rate_limit_prevent_send(tmp_path) -> 
     policy = OutboundPolicy(
         ("owner@example.com",),
         allowed_recipient_domains=("example.net",),
+        attachment_root=tmp_path,
         max_attachment_bytes=3,
         rate_limit_messages=1,
     )
