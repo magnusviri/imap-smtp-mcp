@@ -64,6 +64,43 @@ def test_valid_configuration_builds_typed_accounts(
     assert work.mailboxes == ("INBOX", "Archive")
 
 
+def test_outbound_policy_configuration_is_typed(valid_config) -> None:
+    raw = copy.deepcopy(valid_config)
+    raw["accounts"][1]["outbound_policy"] = {
+        "allowed_recipients": ["Friend@Example.NET"],
+        "allowed_recipient_domains": ["Example.ORG"],
+        "max_attachment_bytes": 1234,
+        "rate_limit_messages": 4,
+        "rate_limit_window_seconds": 90,
+    }
+
+    policy = parse_config(raw).account("work").outbound_policy
+
+    assert policy.allowed_recipients == ("friend@example.net",)
+    assert policy.allowed_recipient_domains == ("example.org",)
+    assert policy.max_attachment_bytes == 1234
+    assert policy.rate_limit_messages == 4
+    assert policy.rate_limit_window_seconds == 90
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("allowed_recipients", ["not-an-address"]),
+        ("allowed_recipient_domains", ["@example.org"]),
+        ("max_attachment_bytes", -1),
+        ("rate_limit_messages", 0),
+        ("rate_limit_window_seconds", True),
+    ],
+)
+def test_invalid_outbound_policy_is_rejected(valid_config, field, value) -> None:
+    raw = copy.deepcopy(valid_config)
+    raw["accounts"][1]["outbound_policy"] = {field: value}
+
+    with pytest.raises(ConfigurationError):
+        parse_config(raw)
+
+
 def test_loads_documented_toml_shape(tmp_path) -> None:
     path = tmp_path / "config.toml"
     path.write_text(

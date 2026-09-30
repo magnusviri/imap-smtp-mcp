@@ -1,0 +1,499 @@
+"""Local draft persistence and policy-guarded outbound mail workflows."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import mimetypes
+import os
+import sqlite3
+import uuid
+from collections import deque
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Protocol
+
+from mcp.server.mcpserver.exceptions import ToolError
+
+from personal_mail_mcp.adapters import (
+    MailAdapterError,
+    OperationContext,
+    OutboundDeliveryAdapter,
+)
+from personal_mail_mcp.config import Account
+from personal_mail_mcp.domain import (
+    AttachmentMetadata,
+    BodyVariants,
+    DeliveryResult,
+    DomainValidationError,
+    Draft,
+    MessageId,
+    Participant,
+    parse_message_id,
+)
+
+
+@dataclass(frozen=True)
+class OutboundPolicy:
+    """Per-account restrictions evaluated before external delivery."""
+
+    sender_addresses: tuple[str, ...]
+    allowed_recipients: tuple[str, ...] = ()
+    allowed_recipient_domains: tuple[str, ...] = ()
+    max_attachment_bytes: int = 10 * 1024 * 1024
+    rate_limit_messages: int = 20
+    rate_limit_window_seconds: int = 3600
+
+    def __post_init__(self) -> None:
+        if not self.sender_addresses:
+            raise ValueError("At least one sender address is required.")
+        if self.max_attachment_bytes < 0:
+            raise ValueError("max_attachment_bytes cannot be negative.")
+        if self.rate_limit_messages < 1 or self.rate_limit_window_seconds < 1:
+            raise ValueError("Rate limits must be positive.")
+
+    @classmethod
+    def from_account(cls, account: Account) -> OutboundPolicy:
+        """Build the runtime policy directly from validated account config."""
+        configured = account.outbound_policy
+        return cls(
+            sender_addresses=account.sender_addresses,
+            allowed_recipients=configured.allowed_recipients,
+            allowed_recipient_domains=configured.allowed_recipient_domains,
+            max_attachment_bytes=configured.max_attachment_bytes,
+            rate_limit_messages=configured.rate_limit_messages,
+            rate_limit_window_seconds=configured.rate_limit_window_seconds,
+        )
+
+
+class DraftStore(Protocol):
+    def put(self, draft: Draft) -> None: ...
+
+    def get(self, draft_id: str) -> Draft | None: ...
+
+
+class InMemoryDraftStore:
+    """Process-local store useful for embedding and deterministic tests."""
+
+    def __init__(self) -> None:
+        self._drafts: dict[str, Draft] = {}
+
+    def put(self, draft: Draft) -> None:
+        self._drafts[draft.id] = draft
+
+    def get(self, draft_id: str) -> Draft | None:
+        return self._drafts.get(draft_id)
+
+
+class SqliteDraftStore:
+    """Persistent local draft store; credentials are never accepted or stored."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(self.path)
+        os.chmod(self.path, 0o600)
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS drafts (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.commit()
+
+    def put(self, draft: Draft) -> None:
+        payload = json.dumps(_draft_json(draft), sort_keys=True, separators=(",", ":"))
+        self._connection.execute(
+            "INSERT OR REPLACE INTO drafts (id, payload) VALUES (?, ?)",
+            (draft.id, payload),
+        )
+        self._connection.commit()
+
+    def get(self, draft_id: str) -> Draft | None:
+        row = self._connection.execute(
+            "SELECT payload FROM drafts WHERE id = ?", (draft_id,)
+        ).fetchone()
+        return _draft_from_json(json.loads(row[0])) if row is not None else None
+
+
+class AuditLog:
+    """Append-only JSONL audit log containing hashes, never mail content."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    def append(
+        self,
+        *,
+        timestamp: datetime,
+        action: str,
+        account_id: str,
+        draft: Draft,
+        idempotency_key: str,
+        provider_result: str,
+    ) -> None:
+        record = {
+            "timestamp": timestamp.isoformat(),
+            "action": action,
+            "account_id": account_id,
+            "recipient_hashes": sorted(
+                _hash(item.address.casefold())
+                for item in (*draft.to, *draft.cc, *draft.bcc)
+            ),
+            "subject_hash": _hash(draft.subject),
+            "idempotency_key": idempotency_key,
+            "provider_result": provider_result,
+        }
+        descriptor = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            os.write(
+                descriptor,
+                (
+                    json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+                ).encode(),
+            )
+        finally:
+            os.close(descriptor)
+
+
+@dataclass(frozen=True)
+class _IdempotentResult:
+    fingerprint: str
+    result: DeliveryResult
+
+
+class GuardedOutboundService:
+    """Execute draft and delivery tools behind one mandatory policy path."""
+
+    def __init__(
+        self,
+        adapters: Mapping[str, OutboundDeliveryAdapter],
+        policies: Mapping[str, OutboundPolicy],
+        *,
+        draft_store: DraftStore | None = None,
+        audit_log: AuditLog | None = None,
+        timeout_seconds: float = 30.0,
+        clock: Callable[[], datetime] | None = None,
+        id_factory: Callable[[], str] | None = None,
+    ) -> None:
+        if set(adapters) != set(policies):
+            raise ValueError("Every outbound adapter requires exactly one policy.")
+        self._adapters = dict(adapters)
+        self._policies = dict(policies)
+        self._drafts = draft_store or InMemoryDraftStore()
+        self._audit = audit_log
+        self._timeout_seconds = timeout_seconds
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
+        self._idempotency: dict[tuple[str, str], _IdempotentResult] = {}
+        self._deliveries: dict[str, deque[datetime]] = {
+            account_id: deque() for account_id in adapters
+        }
+        self._lock = asyncio.Lock()
+
+    async def execute(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        if tool_name == "create_draft":
+            return self._create_draft(arguments)
+        if tool_name not in {"send_message", "reply_to_message", "forward_message"}:
+            raise ToolError(
+                f"Tool {tool_name!r} is not available in the outbound service."
+            )
+        return await self._deliver(tool_name, arguments)
+
+    def _create_draft(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        account_id, _adapter, _policy = self._account(arguments)
+        draft = self._draft(
+            account_id,
+            arguments.get("content"),
+            reply_to=self._source(arguments.get("reply_to_message_id"), account_id),
+            forward_of=self._source(arguments.get("forward_of_message_id"), account_id),
+        )
+        if draft.reply_to is not None and draft.forward_of is not None:
+            raise ToolError("A draft cannot be both a reply and a forward.")
+        self._drafts.put(draft)
+        return {"draft_id": draft.id, "account_id": account_id, "status": "draft"}
+
+    async def _deliver(
+        self, action: str, arguments: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        account_id, adapter, policy = self._account(arguments)
+        if arguments.get("confirm_send") is not True:
+            raise ToolError("External delivery requires confirm_send=true.")
+        key = arguments.get("idempotency_key")
+        if not isinstance(key, str) or not key.strip():
+            raise ToolError("A non-empty idempotency_key is required.")
+
+        if action == "send_message":
+            draft_id = arguments.get("draft_id")
+            if not isinstance(draft_id, str) or not draft_id.strip():
+                raise ToolError("A non-empty draft_id is required.")
+            draft = self._drafts.get(draft_id)
+            if draft is None or draft.account_id != account_id:
+                raise ToolError("The local draft was not found for this account.")
+            source = draft.reply_to or draft.forward_of
+        else:
+            source = self._source(arguments.get("message_id"), account_id)
+            assert source is not None
+            draft = self._draft(
+                account_id,
+                arguments.get("content"),
+                reply_to=source if action == "reply_to_message" else None,
+                forward_of=source if action == "forward_message" else None,
+            )
+
+        fingerprint = _fingerprint(action, account_id, draft, source)
+        cache_key = (account_id, key)
+        async with self._lock:
+            previous = self._idempotency.get(cache_key)
+            if previous is not None:
+                if previous.fingerprint != fingerprint:
+                    raise ToolError(
+                        "The idempotency key was already used for another action."
+                    )
+                return _delivery(previous.result, key)
+
+            self._validate_policy(draft, policy)
+            now = self._clock()
+            history = self._deliveries[account_id]
+            cutoff = now - timedelta(seconds=policy.rate_limit_window_seconds)
+            while history and history[0] <= cutoff:
+                history.popleft()
+            if len(history) >= policy.rate_limit_messages:
+                raise ToolError("The configured account rate limit has been reached.")
+
+            context = OperationContext(self._timeout_seconds)
+            try:
+                if draft.reply_to is not None:
+                    result = await adapter.reply(draft.reply_to, draft, context)
+                elif draft.forward_of is not None:
+                    result = await adapter.forward(draft.forward_of, draft, context)
+                else:
+                    result = await adapter.send(draft, context)
+            except MailAdapterError as error:
+                raise ToolError(str(error)) from None
+            except Exception:  # noqa: BLE001
+                raise ToolError(
+                    "The mail provider could not deliver the message."
+                ) from None
+
+            history.append(now)
+            self._idempotency[cache_key] = _IdempotentResult(fingerprint, result)
+            if self._audit is not None:
+                self._audit.append(
+                    timestamp=now,
+                    action=action,
+                    account_id=account_id,
+                    draft=draft,
+                    idempotency_key=key,
+                    provider_result=_hash(result.provider_id),
+                )
+            return _delivery(result, key)
+
+    def _account(self, arguments: Mapping[str, Any]):
+        account_id = arguments.get("account_id")
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ToolError("A configured account_id is required.")
+        try:
+            return account_id, self._adapters[account_id], self._policies[account_id]
+        except KeyError:
+            raise ToolError(f"Unknown account ID {account_id!r}.") from None
+
+    def _draft(
+        self,
+        account_id: str,
+        content: Any,
+        *,
+        reply_to: MessageId | None = None,
+        forward_of: MessageId | None = None,
+    ) -> Draft:
+        if not isinstance(content, Mapping):
+            raise ToolError("Draft content is required.")
+        try:
+            attachments = tuple(
+                _attachment(path) for path in content.get("attachment_paths", ())
+            )
+            return Draft(
+                id=self._id_factory(),
+                account_id=account_id,
+                sender=Participant(str(content.get("sender", ""))),
+                to=_participants(content.get("to", ())),
+                cc=_participants(content.get("cc", ())),
+                bcc=_participants(content.get("bcc", ())),
+                reply_to_address=_optional_participant(content.get("reply_to")),
+                subject=str(content.get("subject", "")),
+                body=_body(content.get("body")),
+                created_at=self._clock(),
+                reply_to=reply_to,
+                forward_of=forward_of,
+                attachments=attachments,
+            )
+        except (DomainValidationError, OSError, TypeError, ValueError):
+            raise ToolError("Draft content is invalid.") from None
+
+    @staticmethod
+    def _source(value: Any, account_id: str) -> MessageId | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ToolError("Malformed message identifier.")
+        try:
+            source = parse_message_id(value)
+        except DomainValidationError as error:
+            raise ToolError(str(error)) from None
+        if source.account_id != account_id:
+            raise ToolError("The message reference belongs to another account.")
+        return source
+
+    @staticmethod
+    def _validate_policy(draft: Draft, policy: OutboundPolicy) -> None:
+        if draft.sender.address.casefold() not in {
+            item.casefold() for item in policy.sender_addresses
+        }:
+            raise ToolError("The sender address is not owned by this account.")
+        recipients = (*draft.to, *draft.cc, *draft.bcc)
+        if not recipients:
+            raise ToolError("At least one recipient is required.")
+        allowed = {item.casefold() for item in policy.allowed_recipients}
+        domains = {
+            item.casefold().removeprefix("@")
+            for item in policy.allowed_recipient_domains
+        }
+        for recipient in recipients:
+            address = recipient.address.casefold()
+            domain = address.rsplit("@", 1)[-1]
+            if address not in allowed and domain not in domains:
+                raise ToolError(
+                    "A recipient is not permitted by the account allowlist."
+                )
+        total = 0
+        for attachment in draft.attachments:
+            try:
+                current_size = Path(attachment.id).stat().st_size
+            except OSError:
+                raise ToolError("An attachment is unavailable at send time.") from None
+            if current_size != attachment.size_bytes:
+                raise ToolError("An attachment changed after the draft was created.")
+            total += current_size
+        if total > policy.max_attachment_bytes:
+            raise ToolError("Attachments exceed the configured combined size limit.")
+
+
+def _participants(values: Any) -> tuple[Participant, ...]:
+    if not isinstance(values, (list, tuple)):
+        raise TypeError
+    return tuple(_optional_participant(item, required=True) for item in values)  # type: ignore[misc]
+
+
+def _optional_participant(value: Any, *, required: bool = False) -> Participant | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError
+    return Participant(str(value.get("address", "")), value.get("name"))
+
+
+def _body(value: Any) -> BodyVariants:
+    if not isinstance(value, Mapping):
+        raise TypeError
+    return BodyVariants(text=value.get("text"), html=value.get("html"))
+
+
+def _attachment(value: Any) -> AttachmentMetadata:
+    if not isinstance(value, str) or not value:
+        raise ValueError
+    path = Path(value)
+    size = path.stat().st_size
+    return AttachmentMetadata(
+        id=str(path),
+        filename=path.name,
+        media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        size_bytes=size,
+    )
+
+
+def _delivery(result: DeliveryResult, key: str) -> dict[str, Any]:
+    return {
+        "provider_id": result.provider_id,
+        "accepted_at": result.accepted_at.isoformat(),
+        "idempotency_key": key,
+    }
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _fingerprint(
+    action: str, account_id: str, draft: Draft, source: MessageId | None
+) -> str:
+    draft_value = _draft_json(draft)
+    # Generated local identity and timestamps are not part of the caller's
+    # request, so a direct reply/forward retry must not depend on them.
+    draft_value.pop("id")
+    draft_value.pop("created_at")
+    value = {
+        "action": action,
+        "account": account_id,
+        "draft": draft_value,
+        "source": source.serialize() if source else None,
+    }
+    return _hash(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def _draft_json(draft: Draft) -> dict[str, Any]:
+    participant = lambda item: {"address": item.address, "name": item.name}
+    return {
+        "id": draft.id,
+        "account_id": draft.account_id,
+        "sender": participant(draft.sender),
+        "to": [participant(item) for item in draft.to],
+        "cc": [participant(item) for item in draft.cc],
+        "bcc": [participant(item) for item in draft.bcc],
+        "reply_to_address": participant(draft.reply_to_address)
+        if draft.reply_to_address
+        else None,
+        "subject": draft.subject,
+        "body": {"text": draft.body.text, "html": draft.body.html},
+        "created_at": draft.created_at.isoformat(),
+        "reply_to": draft.reply_to.serialize() if draft.reply_to else None,
+        "forward_of": draft.forward_of.serialize() if draft.forward_of else None,
+        "attachments": [
+            {
+                "id": item.id,
+                "filename": item.filename,
+                "media_type": item.media_type,
+                "size_bytes": item.size_bytes,
+                "inline": item.inline,
+                "content_id": item.content_id,
+            }
+            for item in draft.attachments
+        ],
+    }
+
+
+def _draft_from_json(value: Mapping[str, Any]) -> Draft:
+    participant = lambda item: Participant(item["address"], item.get("name"))
+    return Draft(
+        id=value["id"],
+        account_id=value["account_id"],
+        sender=participant(value["sender"]),
+        to=tuple(participant(item) for item in value["to"]),
+        cc=tuple(participant(item) for item in value["cc"]),
+        bcc=tuple(participant(item) for item in value["bcc"]),
+        reply_to_address=(
+            participant(value["reply_to_address"])
+            if value["reply_to_address"]
+            else None
+        ),
+        subject=value["subject"],
+        body=BodyVariants(**value["body"]),
+        created_at=datetime.fromisoformat(value["created_at"]),
+        reply_to=parse_message_id(value["reply_to"]) if value["reply_to"] else None,
+        forward_of=parse_message_id(value["forward_of"])
+        if value["forward_of"]
+        else None,
+        attachments=tuple(AttachmentMetadata(**item) for item in value["attachments"]),
+    )

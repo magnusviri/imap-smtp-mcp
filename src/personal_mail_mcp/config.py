@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -56,6 +56,17 @@ class EndpointSettings:
 
 
 @dataclass(frozen=True)
+class OutboundPolicySettings:
+    """Local delivery policy configured independently from credentials."""
+
+    allowed_recipients: tuple[str, ...] = ()
+    allowed_recipient_domains: tuple[str, ...] = ()
+    max_attachment_bytes: int = 10 * 1024 * 1024
+    rate_limit_messages: int = 20
+    rate_limit_window_seconds: int = 3600
+
+
+@dataclass(frozen=True)
 class AppleMailAccount:
     """A configured account owned by macOS Mail.app."""
 
@@ -64,6 +75,9 @@ class AppleMailAccount:
     sender_addresses: tuple[str, ...]
     mailboxes: tuple[str, ...]
     mail_account: str
+    outbound_policy: OutboundPolicySettings = field(
+        default_factory=OutboundPolicySettings
+    )
 
 
 @dataclass(frozen=True)
@@ -78,6 +92,9 @@ class ImapSmtpAccount:
     secret_ref: SecretReference
     imap: EndpointSettings
     smtp: EndpointSettings
+    outbound_policy: OutboundPolicySettings = field(
+        default_factory=OutboundPolicySettings
+    )
 
 
 Account = AppleMailAccount | ImapSmtpAccount
@@ -175,6 +192,9 @@ def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
             "id": account_id,
             "sender_addresses": sender_addresses,
             "mailboxes": mailboxes,
+            "outbound_policy": _parse_outbound_policy(
+                data.get("outbound_policy", {}), account_id
+            ),
         }
         if account_type == "apple-mail":
             accounts.append(
@@ -233,6 +253,30 @@ def _parse_endpoint(value: Any, account_id: str, name: str) -> EndpointSettings:
     return EndpointSettings(host=host, port=port, tls=tls)
 
 
+def _parse_outbound_policy(value: Any, account_id: str) -> OutboundPolicySettings:
+    data = _mapping(value, f"account {account_id!r} outbound_policy")
+    recipients = _optional_string_list(
+        data, "allowed_recipients", account_id, validate_email=True
+    )
+    domains = _optional_string_list(data, "allowed_recipient_domains", account_id)
+    if any("@" in domain or "." not in domain for domain in domains):
+        raise ConfigurationError(
+            f"Account {account_id!r} has an invalid allowed recipient domain."
+        )
+    maximum = _positive_integer(
+        data,
+        "max_attachment_bytes",
+        account_id,
+        default=10 * 1024 * 1024,
+        allow_zero=True,
+    )
+    messages = _positive_integer(data, "rate_limit_messages", account_id, default=20)
+    window = _positive_integer(
+        data, "rate_limit_window_seconds", account_id, default=3600
+    )
+    return OutboundPolicySettings(recipients, domains, maximum, messages, window)
+
+
 def _mapping(value: Any, location: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ConfigurationError(f"{location} must be a TOML table.")
@@ -271,6 +315,50 @@ def _string_list(
             f"Account {account_id!r} has an invalid sender address."
         )
     return result
+
+
+def _optional_string_list(
+    data: Mapping[str, Any],
+    key: str,
+    account_id: str,
+    *,
+    validate_email: bool = False,
+) -> tuple[str, ...]:
+    if key not in data:
+        return ()
+    value = data[key]
+    if not isinstance(value, list):
+        raise ConfigurationError(f"Account {account_id!r} {key} must be a list.")
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ConfigurationError(
+            f"Account {account_id!r} {key} must contain only non-empty strings."
+        )
+    result = tuple(item.strip().casefold() for item in value)
+    if len(result) != len(set(result)):
+        raise ConfigurationError(f"Account {account_id!r} has duplicate {key}.")
+    if validate_email and any(not _EMAIL_RE.fullmatch(item) for item in result):
+        raise ConfigurationError(
+            f"Account {account_id!r} has an invalid allowed recipient address."
+        )
+    return result
+
+
+def _positive_integer(
+    data: Mapping[str, Any],
+    key: str,
+    account_id: str,
+    *,
+    default: int,
+    allow_zero: bool = False,
+) -> int:
+    value = data.get(key, default)
+    minimum = 0 if allow_zero else 1
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ConfigurationError(
+            f"Account {account_id!r} {key} must be a {qualifier} integer."
+        )
+    return value
 
 
 def _reject_plaintext_secrets(value: Any, location: str = "configuration") -> None:

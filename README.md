@@ -83,7 +83,27 @@ tls = true
 host = "smtp.example.com"
 port = 465
 tls = true
+
+[accounts.outbound_policy]
+allowed_recipients = ["family@example.net"]
+allowed_recipient_domains = ["example.org"]
+max_attachment_bytes = 10485760
+rate_limit_messages = 20
+rate_limit_window_seconds = 3600
 ```
+
+Outbound mail is draft-first and denied unless every recipient matches either
+`allowed_recipients` or `allowed_recipient_domains`. Sending a draft, replying,
+and forwarding all require `confirm_send = true` and a caller-generated
+idempotency key. The same key returns the original delivery result on retry
+without sending another message. Per-account sender ownership, attachment-size,
+and rate-limit checks run before provider delivery.
+
+Draft content can be kept in a user-only SQLite file through the local draft
+store. Keep this file separate from the operating-system credential store. The
+append-only audit log contains recipient and subject hashes, an idempotency key,
+and a hash of the provider result; it does not contain credentials, addresses,
+subjects, or message bodies.
 
 Create the referenced generic-password entry without putting its value on the
 command line (the `security` command prompts for it):
