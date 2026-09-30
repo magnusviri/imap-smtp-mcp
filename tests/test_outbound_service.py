@@ -278,10 +278,13 @@ def test_runtime_policy_is_built_from_validated_account_configuration() -> None:
             "accounts": [
                 {
                     "id": "personal",
-                    "type": "apple-mail",
-                    "mail_account": "iCloud",
+                    "type": "imap-smtp",
                     "sender_addresses": ["owner@example.com"],
                     "mailboxes": ["Inbox"],
+                    "username": "owner@example.com",
+                    "secret_ref": "personal-mail",
+                    "imap": {"host": "imap.example.com", "port": 993, "tls": True},
+                    "smtp": {"host": "smtp.example.com", "port": 465, "tls": True},
                     "outbound_policy": {
                         "allowed_recipients": ["friend@example.net"],
                         "rate_limit_messages": 2,

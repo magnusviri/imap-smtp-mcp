@@ -71,20 +71,6 @@ class OutboundPolicySettings:
 
 
 @dataclass(frozen=True)
-class AppleMailAccount:
-    """A configured account owned by macOS Mail.app."""
-
-    id: str
-    type: Literal["apple-mail"]
-    sender_addresses: tuple[str, ...]
-    mailboxes: tuple[str, ...]
-    mail_account: str
-    outbound_policy: OutboundPolicySettings = field(
-        default_factory=OutboundPolicySettings
-    )
-
-
-@dataclass(frozen=True)
 class ImapSmtpAccount:
     """A configured generic IMAP and SMTP account."""
 
@@ -102,7 +88,7 @@ class ImapSmtpAccount:
     )
 
 
-Account = AppleMailAccount | ImapSmtpAccount
+Account = ImapSmtpAccount
 
 
 @dataclass(frozen=True)
@@ -216,15 +202,7 @@ def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
                 data.get("outbound_policy", {}), account_id
             ),
         }
-        if account_type == "apple-mail":
-            accounts.append(
-                AppleMailAccount(
-                    type="apple-mail",
-                    mail_account=_required_string(data, "mail_account", account_id),
-                    **common,
-                )
-            )
-        elif account_type == "imap-smtp":
+        if account_type == "imap-smtp":
             accounts.append(
                 ImapSmtpAccount(
                     type="imap-smtp",
@@ -243,7 +221,7 @@ def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
         else:
             raise ConfigurationError(
                 f"Account {account_id!r} has unknown type {account_type!r}; "
-                "expected 'apple-mail' or 'imap-smtp'."
+                "expected 'imap-smtp'."
             )
     return PersonalMailConfig(server=server, accounts=tuple(accounts))
 

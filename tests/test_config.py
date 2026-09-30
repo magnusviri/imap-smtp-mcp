@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from personal_mail_mcp.config import (
-    AppleMailAccount,
     ConfigurationError,
     ImapSmtpAccount,
     load_config,
@@ -32,11 +31,14 @@ def valid_config() -> dict[str, object]:
         },
         "accounts": [
             {
-                "id": "icloud",
-                "type": "apple-mail",
+                "id": "personal",
+                "type": "imap-smtp",
                 "sender_addresses": ["me@example.com"],
-                "mailboxes": ["Inbox", "Sent"],
-                "mail_account": "iCloud",
+                "mailboxes": ["INBOX"],
+                "username": "me@example.com",
+                "secret_ref": "personal-mail",
+                "imap": {"host": "imap.example.com", "port": 993, "tls": True},
+                "smtp": {"host": "smtp.example.com", "port": 465, "tls": True},
             },
             {
                 "id": "work",
@@ -59,7 +61,6 @@ def test_valid_configuration_builds_typed_accounts(
 
     assert config.server.request_timeout_seconds == 20
     assert config.server.keychain_service == "personal-mail-test"
-    assert isinstance(config.account("icloud"), AppleMailAccount)
     work = config.account("work")
     assert isinstance(work, ImapSmtpAccount)
     assert work.imap.port == 993
@@ -154,7 +155,6 @@ tls = true
 @pytest.mark.parametrize(
     "name",
     [
-        "apple-mail.toml",
         "imap-smtp.toml",
         "gmail.toml",
         "icloud.toml",
@@ -170,7 +170,7 @@ def test_documented_example_configuration_is_valid(name: str) -> None:
 
 
 def test_validation_command_reports_success(monkeypatch, capsys) -> None:
-    example = Path(__file__).parents[1] / "examples" / "apple-mail.toml"
+    example = Path(__file__).parents[1] / "examples" / "imap-smtp.toml"
     monkeypatch.setattr(sys, "argv", ["personal-mail-mcp-validate", str(example)])
 
     validate_main()
@@ -189,7 +189,7 @@ def test_unknown_account_type_is_rejected(valid_config: dict[str, object]) -> No
 @pytest.mark.parametrize(
     ("field", "duplicate", "message"),
     [
-        ("id", "icloud", "Duplicate account ID"),
+        ("id", "personal", "Duplicate account ID"),
         ("sender_addresses", ["ME@EXAMPLE.COM"], "Duplicate sender address"),
     ],
 )

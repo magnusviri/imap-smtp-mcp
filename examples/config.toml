@@ -1,0 +1,49 @@
+# Multi-account IMAP/SMTP configuration. Replace placeholders before use.
+# Each secret_ref identifies a separately stored password or OAuth access token.
+
+[server]
+request_timeout_seconds = 30
+keychain_service = "personal-mail-mcp"
+
+[[accounts]]
+id = "personal"
+type = "imap-smtp"
+sender_addresses = ["you@example.com"]
+mailboxes = ["INBOX", "Archive", "Sent"]
+username = "you@example.com"
+secret_ref = "personal-imap-smtp"
+
+[accounts.imap]
+host = "imap.example.com"
+port = 993
+tls = true
+
+[accounts.smtp]
+host = "smtp.example.com"
+port = 465
+tls = true
+
+[accounts.outbound_policy]
+allowed_recipients = ["test-recipient@example.net"]
+
+[[accounts]]
+id = "work"
+type = "imap-smtp"
+sender_addresses = ["you@work.example"]
+mailboxes = ["INBOX", "Projects", "Sent Items"]
+username = "you@work.example"
+secret_ref = "work-imap-smtp"
+auth_mode = "oauth2"
+
+[accounts.imap]
+host = "imap.work.example"
+port = 993
+tls = true
+
+[accounts.smtp]
+host = "smtp.work.example"
+port = 465
+tls = true
+
+[accounts.outbound_policy]
+allowed_recipient_domains = ["work.example"]

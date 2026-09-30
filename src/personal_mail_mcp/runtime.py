@@ -7,8 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
-from personal_mail_mcp.apple_mail import AppleMailAdapter
-from personal_mail_mcp.config import AppleMailAccount, PersonalMailConfig
+from personal_mail_mcp.config import PersonalMailConfig
 from personal_mail_mcp.imap_smtp import ImapSmtpAdapter
 from personal_mail_mcp.outbound_service import (
     AuditLog,
@@ -60,15 +59,12 @@ def create_configured_executor(
         FileSecretProvider(secrets_directory) if secrets_directory else None
     )
     for account in config.accounts:
-        if isinstance(account, AppleMailAccount):
-            adapter = AppleMailAdapter(account)
-        else:
-            adapter = ImapSmtpAdapter(
-                account,
-                secret_provider=secret_provider,
-                keychain_service=config.server.keychain_service,
-                attachment_loader=lambda metadata: Path(metadata.id).read_bytes(),
-            )
+        adapter = ImapSmtpAdapter(
+            account,
+            secret_provider=secret_provider,
+            keychain_service=config.server.keychain_service,
+            attachment_loader=lambda metadata: Path(metadata.id).read_bytes(),
+        )
         adapters[account.id] = adapter
 
     state = Path(state_directory) if state_directory else default_state_directory()
