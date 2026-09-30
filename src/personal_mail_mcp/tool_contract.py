@@ -32,6 +32,9 @@ class DraftContentInput(ContractModel):
     bcc: list[ParticipantInput] = Field(
         default_factory=list, description="Bcc recipients."
     )
+    reply_to: ParticipantInput | None = Field(
+        default=None, description="Optional address for the RFC Reply-To header."
+    )
     subject: str = Field(description="Message subject, which may be empty.")
     body: MessageContentInput
     attachment_paths: list[str] = Field(

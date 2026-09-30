@@ -279,6 +279,7 @@ class Draft:
     subject: str
     body: BodyVariants
     created_at: datetime
+    reply_to_address: Participant | None = None
     reply_to: MessageId | None = None
     forward_of: MessageId | None = None
     attachments: tuple[AttachmentMetadata, ...] = ()
