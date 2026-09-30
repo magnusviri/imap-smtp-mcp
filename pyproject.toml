@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 personal-mail-mcp = "personal_mail_mcp.server:main"
+personal-mail-mcp-validate = "personal_mail_mcp.config:validate_main"
 personal-mail-mcp-generate-manifest = "personal_mail_mcp.manifest:generate_main"
 personal-mail-mcp-check-manifest = "personal_mail_mcp.manifest:check_main"
 

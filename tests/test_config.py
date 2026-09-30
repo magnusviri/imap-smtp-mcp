@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from personal_mail_mcp.config import (
@@ -11,6 +13,7 @@ from personal_mail_mcp.config import (
     ImapSmtpAccount,
     load_config,
     parse_config,
+    validate_main,
 )
 from personal_mail_mcp.secrets import (
     KeychainSecretProvider,
@@ -137,6 +140,24 @@ tls = true
     config = load_config(path)
 
     assert config.accounts[0].id == "personal"
+
+
+@pytest.mark.parametrize("name", ["apple-mail.toml", "imap-smtp.toml"])
+def test_documented_example_configuration_is_valid(name: str) -> None:
+    examples = Path(__file__).parents[1] / "examples"
+
+    config = load_config(examples / name)
+
+    assert len(config.accounts) == 1
+
+
+def test_validation_command_reports_success(monkeypatch, capsys) -> None:
+    example = Path(__file__).parents[1] / "examples" / "apple-mail.toml"
+    monkeypatch.setattr(sys, "argv", ["personal-mail-mcp-validate", str(example)])
+
+    validate_main()
+
+    assert capsys.readouterr().out == "Configuration is valid (1 account(s)).\n"
 
 
 def test_unknown_account_type_is_rejected(valid_config: dict[str, object]) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
@@ -9,7 +10,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from personal_mail_mcp.config import ConfigurationError, load_config
 from personal_mail_mcp.diagnostics import configure_diagnostics
+from personal_mail_mcp.runtime import create_configured_executor
 from personal_mail_mcp.tool_contract import (
     AccountsResult,
     AttachmentResult,
@@ -245,4 +248,12 @@ def create_server(executor: ToolExecutor | None = None) -> MCPServer:
 def main() -> None:
     """Run the personal-mail server over the MCP stdio transport."""
     configure_diagnostics()
-    create_server().run(transport="stdio")
+    config_path = os.environ.get("PERSONAL_MAIL_MCP_CONFIG")
+    executor = None
+    if config_path:
+        try:
+            executor = create_configured_executor(load_config(config_path))
+        except (ConfigurationError, OSError, ValueError) as error:
+            raise SystemExit(f"Could not start personal-mail-mcp: {error}") from None
+    server = create_server(executor) if executor is not None else create_server()
+    server.run(transport="stdio")

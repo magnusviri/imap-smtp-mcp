@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -155,6 +157,21 @@ def load_config(path: str | Path) -> PersonalMailConfig:
             f"{error.__class__.__name__}."
         ) from None
     return parse_config(raw)
+
+
+def validate_main() -> None:
+    """Validate a configuration without resolving credentials or contacting mail."""
+    parser = argparse.ArgumentParser(
+        description="Validate a personal-mail-mcp TOML configuration."
+    )
+    parser.add_argument("path", help="Path to config.toml")
+    arguments = parser.parse_args()
+    try:
+        config = load_config(arguments.path)
+    except ConfigurationError as error:
+        print(f"Invalid personal-mail-mcp configuration: {error}", file=sys.stderr)
+        raise SystemExit(2) from None
+    print(f"Configuration is valid ({len(config.accounts)} account(s)).")
 
 
 def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:

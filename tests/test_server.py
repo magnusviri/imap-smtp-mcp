@@ -141,6 +141,34 @@ def test_packaged_executable_starts_stdio_only(monkeypatch) -> None:
 
     monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
     monkeypatch.setattr(server_module, "create_server", Runner)
+    monkeypatch.delenv("PERSONAL_MAIL_MCP_CONFIG", raising=False)
+
+    server_module.main()
+
+    assert calls == ["stdio"]
+
+
+def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
+    configured = object()
+    calls = []
+
+    class Runner:
+        def run(self, *, transport):
+            calls.append(transport)
+
+    monkeypatch.setenv("PERSONAL_MAIL_MCP_CONFIG", "/private/config.toml")
+    monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
+    monkeypatch.setattr(server_module, "load_config", lambda path: ("config", path))
+    monkeypatch.setattr(
+        server_module,
+        "create_configured_executor",
+        lambda config: configured if config[0] == "config" else None,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_server",
+        lambda executor: Runner() if executor is configured else None,
+    )
 
     server_module.main()
 
