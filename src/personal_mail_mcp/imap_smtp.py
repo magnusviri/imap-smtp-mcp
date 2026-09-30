@@ -17,7 +17,7 @@ from email.parser import BytesParser
 from email.utils import format_datetime, getaddresses, make_msgid, parsedate_to_datetime
 from typing import Protocol
 
-from personal_mail_mcp.adapters import OperationContext
+from personal_mail_mcp.adapters import MailAdapterError, OperationContext
 from personal_mail_mcp.config import ImapSmtpAccount
 from personal_mail_mcp.domain import (
     AccountSummary,
@@ -40,7 +40,7 @@ from personal_mail_mcp.domain import (
 from personal_mail_mcp.secrets import KeychainSecretProvider, SecretProvider
 
 
-class ImapSmtpError(RuntimeError):
+class ImapSmtpError(MailAdapterError):
     """A sanitized, user-actionable provider failure."""
 
 

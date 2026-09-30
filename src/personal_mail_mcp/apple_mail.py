@@ -18,7 +18,7 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Protocol
 
-from personal_mail_mcp.adapters import OperationContext
+from personal_mail_mcp.adapters import MailAdapterError, OperationContext
 from personal_mail_mcp.config import AppleMailAccount
 from personal_mail_mcp.domain import (
     AccountSummary,
@@ -39,7 +39,7 @@ from personal_mail_mcp.domain import (
 )
 
 
-class AppleMailError(RuntimeError):
+class AppleMailError(MailAdapterError):
     """A sanitized, user-actionable Mail.app failure."""
 
 

@@ -20,7 +20,11 @@ from personal_mail_mcp.domain import (
 )
 
 
-class OperationCancelledError(RuntimeError):
+class MailAdapterError(RuntimeError):
+    """Safe provider-boundary failure suitable for an MCP client."""
+
+
+class OperationCancelledError(MailAdapterError):
     """Raised before provider work when its caller has cancelled it."""
 
 

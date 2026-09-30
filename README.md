@@ -4,6 +4,12 @@
 email from a local MCP host. It is an independent Python package and does not
 modify or proxy a hosted mail service.
 
+Read tools return at most 240 characters of each message preview. Full text and
+HTML bodies are available only from `get_message`. `get_attachment` returns
+base64 content in memory and never writes to an arbitrary filesystem path; the
+default inline attachment limit is 1 MiB, after which retrieval fails with an
+actionable size error.
+
 This package provides the stdio server runtime, validated local account
 configuration, and the typed public tool catalog. Provider integrations are
 added independently behind the runtime's service boundary.
