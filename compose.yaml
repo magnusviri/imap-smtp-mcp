@@ -1,25 +1,43 @@
+version: "3.8"
+
 services:
-  personal-mail-mcp:
-    build: .
+  imap-smtp-mcp:
+    image: ${IMAP_SMTP_MCP_IMAGE:?set the locally built or registry image tag}
     ports:
-      - "127.0.0.1:8787:8787"
+      - target: 8787
+        published: 8787
+        protocol: tcp
+        mode: host
     environment:
-      PERSONAL_MAIL_MCP_CONFIG: /config/config.toml
-      PERSONAL_MAIL_MCP_TOKEN: ${PERSONAL_MAIL_MCP_TOKEN:?set a 32+ character bearer token}
-      PERSONAL_MAIL_MCP_STATE_DIR: /state
-      PERSONAL_MAIL_MCP_TLS_CERT_FILE: /tls/cert.pem
-      PERSONAL_MAIL_MCP_TLS_KEY_FILE: /tls/key.pem
+      IMAP_SMTP_MCP_CONFIG: /config/config.toml
+      IMAP_SMTP_MCP_TOKEN_FILE: /run/secrets/mcp-bearer-token
+      IMAP_SMTP_MCP_STATE_DIR: /state
+      IMAP_SMTP_MCP_TLS_CERT_FILE: /tls/cert.pem
+      IMAP_SMTP_MCP_TLS_KEY_FILE: /run/secrets/tls-private-key
     volumes:
-      - ${PERSONAL_MAIL_MCP_CONFIG_FILE:?set the absolute config file path}:/config/config.toml:ro
-      - ${PERSONAL_MAIL_MCP_TLS_DIR:?set the absolute TLS directory}:/tls:ro
-      - personal-mail-state:/state
+      - ${IMAP_SMTP_MCP_CONFIG_FILE:?set the absolute config file path}:/config/config.toml:ro
+      - ${IMAP_SMTP_MCP_TLS_CERT_FILE:?set the absolute TLS certificate path}:/tls/cert.pem:ro
+      - imap-smtp-mcp-state:/state
     secrets:
-      - source: gmail-imap-smtp
-        target: gmail-imap-smtp
+      - source: mcp-bearer-token
+        target: mcp-bearer-token
+      # This target must match config/config.toml's secret_ref = "imap-smtp".
+      - source: imap-smtp
+        target: imap-smtp
+      - source: tls-private-key
+        target: tls-private-key
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
 
 secrets:
-  gmail-imap-smtp:
-    file: ${PERSONAL_MAIL_MCP_GMAIL_SECRET_FILE:?set the absolute secret-file path}
+  mcp-bearer-token:
+    external: true
+  imap-smtp:
+    external: true
+  tls-private-key:
+    external: true
 
 volumes:
-  personal-mail-state:
+  imap-smtp-mcp-state:

@@ -1,6 +1,6 @@
 # iCloud Mail. Store an Apple app-specific password under this Keychain reference.
 [server]
-keychain_service = "personal-mail-mcp"
+keychain_service = "imap-smtp-mcp"
 
 [[accounts]]
 id = "icloud-imap"

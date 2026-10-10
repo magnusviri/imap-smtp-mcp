@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.domain import (
     AccountSummary,
     Attachment,
     DeliveryResult,

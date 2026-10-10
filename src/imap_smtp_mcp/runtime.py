@@ -7,16 +7,16 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
-from personal_mail_mcp.config import PersonalMailConfig
-from personal_mail_mcp.imap_smtp import ImapSmtpAdapter
-from personal_mail_mcp.outbound_service import (
+from imap_smtp_mcp.config import ImapSmtpConfig
+from imap_smtp_mcp.imap_smtp import ImapSmtpAdapter
+from imap_smtp_mcp.outbound_service import (
     AuditLog,
     GuardedOutboundService,
     OutboundPolicy,
     SqliteDraftStore,
 )
-from personal_mail_mcp.read_service import ReadService
-from personal_mail_mcp.secrets import FileSecretProvider
+from imap_smtp_mcp.read_service import ReadService
+from imap_smtp_mcp.secrets import FileSecretProvider
 
 READ_TOOLS = {
     "list_accounts",
@@ -48,13 +48,13 @@ class ConfiguredExecutor:
 
 
 def create_configured_executor(
-    config: PersonalMailConfig,
+    config: ImapSmtpConfig,
     *,
     state_directory: str | Path | None = None,
 ) -> ConfiguredExecutor:
     """Build all provider adapters and durable local state from validated config."""
     adapters = {}
-    secrets_directory = os.environ.get("PERSONAL_MAIL_MCP_SECRETS_DIR")
+    secrets_directory = os.environ.get("IMAP_SMTP_MCP_SECRETS_DIR")
     secret_provider = (
         FileSecretProvider(secrets_directory) if secrets_directory else None
     )
@@ -90,14 +90,14 @@ def create_configured_executor(
 def default_state_directory(environment: Mapping[str, str] | None = None) -> Path:
     """Return the per-user local state directory without accepting credentials."""
     selected = os.environ if environment is None else environment
-    if value := selected.get("PERSONAL_MAIL_MCP_STATE_DIR"):
+    if value := selected.get("IMAP_SMTP_MCP_STATE_DIR"):
         state = Path(value).expanduser()
         if not state.is_absolute():
-            raise ValueError("PERSONAL_MAIL_MCP_STATE_DIR must be an absolute path.")
+            raise ValueError("IMAP_SMTP_MCP_STATE_DIR must be an absolute path.")
         return state
     if value := selected.get("XDG_STATE_HOME"):
         state_home = Path(value).expanduser()
         if not state_home.is_absolute():
             raise ValueError("XDG_STATE_HOME must be an absolute path.")
-        return state_home / "personal-mail-mcp"
-    return Path.home() / ".local" / "state" / "personal-mail-mcp"
+        return state_home / "imap-smtp-mcp"
+    return Path.home() / ".local" / "state" / "imap-smtp-mcp"

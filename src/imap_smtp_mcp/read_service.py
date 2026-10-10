@@ -10,13 +10,13 @@ from typing import Any, TypeVar
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from personal_mail_mcp.adapters import (
+from imap_smtp_mcp.adapters import (
     AttachmentAdapter,
     MailAdapterError,
     MailReadAdapter,
     OperationContext,
 )
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.domain import (
     AttachmentMetadata,
     DomainValidationError,
     Mailbox,

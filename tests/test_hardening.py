@@ -8,10 +8,10 @@ import anyio
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from personal_mail_mcp.diagnostics import StructuredDiagnosticFormatter
-from personal_mail_mcp.domain import AccountSummary, DeliveryResult
-from personal_mail_mcp.fake_adapter import FakeMailAdapter
-from personal_mail_mcp.outbound_service import GuardedOutboundService, OutboundPolicy
+from imap_smtp_mcp.diagnostics import StructuredDiagnosticFormatter
+from imap_smtp_mcp.domain import AccountSummary, DeliveryResult
+from imap_smtp_mcp.fake_adapter import FakeMailAdapter
+from imap_smtp_mcp.outbound_service import GuardedOutboundService, OutboundPolicy
 
 
 def _content(paths: list[str]) -> dict[str, object]:
@@ -29,13 +29,13 @@ def _content(paths: list[str]) -> dict[str, object]:
 
 def _service(root: Path, adapter: FakeMailAdapter | None = None):
     selected = adapter or FakeMailAdapter(
-        AccountSummary("personal", "Personal", ("owner@example.com",))
+        AccountSummary("imap-smtp", "IMAP/SMTP", ("owner@example.com",))
     )
     return (
         GuardedOutboundService(
-            {"personal": selected},
+            {"imap-smtp": selected},
             {
-                "personal": OutboundPolicy(
+                "imap-smtp": OutboundPolicy(
                     ("owner@example.com",),
                     allowed_recipients=("friend@example.net",),
                     attachment_root=root,
@@ -70,7 +70,7 @@ def test_attachment_traversal_and_hidden_paths_are_rejected(tmp_path, name) -> N
         _run(
             service.execute(
                 "create_draft",
-                {"account_id": "personal", "content": _content([name])},
+                {"account_id": "imap-smtp", "content": _content([name])},
             )
         )
     assert adapter.deliveries == []
@@ -88,7 +88,7 @@ def test_symlink_escape_and_post_draft_symlink_change_are_rejected(tmp_path) -> 
         _run(
             service.execute(
                 "create_draft",
-                {"account_id": "personal", "content": _content([str(link)])},
+                {"account_id": "imap-smtp", "content": _content([str(link)])},
             )
         )
 
@@ -97,7 +97,7 @@ def test_symlink_escape_and_post_draft_symlink_change_are_rejected(tmp_path) -> 
     created = _run(
         service.execute(
             "create_draft",
-            {"account_id": "personal", "content": _content([str(link)])},
+            {"account_id": "imap-smtp", "content": _content([str(link)])},
         )
     )
     link.unlink()
@@ -107,7 +107,7 @@ def test_symlink_escape_and_post_draft_symlink_change_are_rejected(tmp_path) -> 
             service.execute(
                 "send_message",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "draft_id": created["draft_id"],
                     "confirm_send": True,
                     "idempotency_key": "unsafe",
@@ -134,20 +134,20 @@ def test_attachment_is_read_at_send_time_from_private_snapshot(tmp_path) -> None
     source = root / "report.txt"
     source.write_bytes(b"report")
     adapter = ReadingAdapter(
-        AccountSummary("personal", "Personal", ("owner@example.com",))
+        AccountSummary("imap-smtp", "IMAP/SMTP", ("owner@example.com",))
     )
     service, _ = _service(root, adapter)
     created = _run(
         service.execute(
             "create_draft",
-            {"account_id": "personal", "content": _content([str(source)])},
+            {"account_id": "imap-smtp", "content": _content([str(source)])},
         )
     )
     _run(
         service.execute(
             "send_message",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "draft_id": created["draft_id"],
                 "confirm_send": True,
                 "idempotency_key": "safe",
@@ -161,7 +161,7 @@ def test_attachment_is_read_at_send_time_from_private_snapshot(tmp_path) -> None
 
 def test_structured_diagnostics_redact_private_fields_and_message_patterns() -> None:
     record = logging.LogRecord(
-        "personal-mail",
+        "imap-smtp-mcp",
         logging.ERROR,
         __file__,
         1,

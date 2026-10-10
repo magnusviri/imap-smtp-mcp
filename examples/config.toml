@@ -1,17 +1,19 @@
 # Multi-account IMAP/SMTP configuration. Replace placeholders before use.
-# Each secret_ref identifies a separately stored password or OAuth access token.
+# Every [[accounts]] block has one credential. Its secret_ref must be unique:
+# it is the Keychain entry for local runs and the credential filename for Docker.
 
 [server]
 request_timeout_seconds = 30
-keychain_service = "personal-mail-mcp"
+keychain_service = "imap-smtp-mcp"
 
 [[accounts]]
-id = "personal"
+id = "imap-smtp"
 type = "imap-smtp"
 sender_addresses = ["you@example.com"]
 mailboxes = ["INBOX", "Archive", "Sent"]
 username = "you@example.com"
-secret_ref = "personal-imap-smtp"
+# Local Keychain entry or Docker credential filename: imap-smtp
+secret_ref = "imap-smtp"
 
 [accounts.imap]
 host = "imap.example.com"
@@ -32,6 +34,7 @@ type = "imap-smtp"
 sender_addresses = ["you@work.example"]
 mailboxes = ["INBOX", "Projects", "Sent Items"]
 username = "you@work.example"
+# Local Keychain entry or Docker credential filename: work-imap-smtp
 secret_ref = "work-imap-smtp"
 auth_mode = "oauth2"
 

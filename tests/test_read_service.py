@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import anyio
 from mcp import Client
 
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.domain import (
     AccountSummary,
     Attachment,
     AttachmentMetadata,
@@ -16,15 +16,15 @@ from personal_mail_mcp.domain import (
     MessageSummary,
     Participant,
 )
-from personal_mail_mcp.fake_adapter import FakeAdapterError, FakeMailAdapter
-from personal_mail_mcp.read_service import MAX_PREVIEW_CHARS, ReadService
-from personal_mail_mcp.server import create_server
+from imap_smtp_mcp.fake_adapter import FakeAdapterError, FakeMailAdapter
+from imap_smtp_mcp.read_service import MAX_PREVIEW_CHARS, ReadService
+from imap_smtp_mcp.server import create_server
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
 
 def _message(
-    account_id: str = "personal", mailbox_id: str = "inbox", uid: int = 1
+    account_id: str = "imap-smtp", mailbox_id: str = "inbox", uid: int = 1
 ) -> Message:
     identifier = ImapMessageId(account_id, mailbox_id, 77, uid)
     metadata = AttachmentMetadata("note", "note.txt", "text/plain", 4)
@@ -47,7 +47,7 @@ def _message(
     )
 
 
-def _adapter(account_id: str = "personal") -> FakeMailAdapter:
+def _adapter(account_id: str = "imap-smtp") -> FakeMailAdapter:
     message = _message(account_id)
     second_message = _message(account_id, uid=2)
     return FakeMailAdapter(
@@ -73,11 +73,11 @@ def _error_text(result) -> str:
 
 
 def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> None:
-    personal = _adapter()
+    imap_smtp = _adapter()
     work = _adapter("work")
     service = ReadService(
-        {"personal": personal, "work": work},
-        attachment_adapters={"personal": personal, "work": work},
+        {"imap-smtp": imap_smtp, "work": work},
+        attachment_adapters={"imap-smtp": imap_smtp, "work": work},
     )
 
     async def exercise() -> None:
@@ -85,12 +85,12 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
             accounts = await client.call_tool("list_accounts", {})
             assert accounts.is_error is False
             assert [item["id"] for item in accounts.structured_content["accounts"]] == [
-                "personal",
+                "imap-smtp",
                 "work",
             ]
 
             first = await client.call_tool(
-                "list_mailboxes", {"account_id": "personal", "limit": 1}
+                "list_mailboxes", {"account_id": "imap-smtp", "limit": 1}
             )
             assert [item["id"] for item in first.structured_content["mailboxes"]] == [
                 "inbox"
@@ -98,7 +98,7 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
             second = await client.call_tool(
                 "list_mailboxes",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "limit": 1,
                     "cursor": first.structured_content["next_cursor"],
                 },
@@ -110,7 +110,7 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
             found = await client.call_tool(
                 "search_messages",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "mailbox_id": "inbox",
                     "limit": 1,
                 },
@@ -122,7 +122,7 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
             next_messages = await client.call_tool(
                 "search_messages",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "mailbox_id": "inbox",
                     "limit": 1,
                     "cursor": found.structured_content["next_cursor"],
@@ -134,8 +134,8 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
             full = await client.call_tool(
                 "get_message",
                 {
-                    "account_id": "personal",
-                    "message_id": personal.messages[0].summary.id.serialize(),
+                    "account_id": "imap-smtp",
+                    "message_id": imap_smtp.messages[0].summary.id.serialize(),
                 },
             )
             assert full.structured_content["text_body"] == "complete private body"
@@ -143,8 +143,8 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
             attachment = await client.call_tool(
                 "get_attachment",
                 {
-                    "account_id": "personal",
-                    "message_id": personal.messages[0].summary.id.serialize(),
+                    "account_id": "imap-smtp",
+                    "message_id": imap_smtp.messages[0].summary.id.serialize(),
                     "attachment_id": "note",
                 },
             )
@@ -155,9 +155,9 @@ def test_read_tools_over_in_memory_mcp_are_scoped_paginated_and_bounded() -> Non
 
 
 def test_read_tools_reject_unknown_and_cross_account_references() -> None:
-    personal = _adapter()
+    imap_smtp = _adapter()
     work = _adapter("work")
-    service = ReadService({"personal": personal, "work": work})
+    service = ReadService({"imap-smtp": imap_smtp, "work": work})
 
     async def exercise() -> None:
         async with Client(create_server(service)) as client:
@@ -168,14 +168,14 @@ def test_read_tools_reject_unknown_and_cross_account_references() -> None:
 
             unknown_mailbox = await client.call_tool(
                 "search_messages",
-                {"account_id": "personal", "mailbox_id": "missing"},
+                {"account_id": "imap-smtp", "mailbox_id": "missing"},
             )
             assert "Unknown mailbox ID" in _error_text(unknown_mailbox)
 
             cross_account = await client.call_tool(
                 "get_message",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "message_id": work.messages[0].summary.id.serialize(),
                 },
             )
@@ -183,7 +183,7 @@ def test_read_tools_reject_unknown_and_cross_account_references() -> None:
 
             malformed = await client.call_tool(
                 "get_message",
-                {"account_id": "personal", "message_id": "not-a-message-id"},
+                {"account_id": "imap-smtp", "message_id": "not-a-message-id"},
             )
             assert "Malformed message identifier" in _error_text(malformed)
 
@@ -193,8 +193,8 @@ def test_read_tools_reject_unknown_and_cross_account_references() -> None:
 def test_attachment_limit_is_enforced_without_a_download_write() -> None:
     adapter = _adapter()
     service = ReadService(
-        {"personal": adapter},
-        attachment_adapters={"personal": adapter},
+        {"imap-smtp": adapter},
+        attachment_adapters={"imap-smtp": adapter},
         max_inline_attachment_bytes=3,
     )
 
@@ -203,7 +203,7 @@ def test_attachment_limit_is_enforced_without_a_download_write() -> None:
             result = await client.call_tool(
                 "get_attachment",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "message_id": adapter.messages[0].summary.id.serialize(),
                     "attachment_id": "note",
                 },
@@ -231,7 +231,7 @@ def test_inbound_attachment_mime_metadata_is_validated() -> None:
         messages=source.messages,
     )
     service = ReadService(
-        {"personal": adapter}, attachment_adapters={"personal": adapter}
+        {"imap-smtp": adapter}, attachment_adapters={"imap-smtp": adapter}
     )
 
     async def exercise() -> None:
@@ -239,7 +239,7 @@ def test_inbound_attachment_mime_metadata_is_validated() -> None:
             result = await client.call_tool(
                 "get_attachment",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "message_id": adapter.messages[0].summary.id.serialize(),
                     "attachment_id": "note",
                 },
@@ -262,14 +262,14 @@ def test_sanitized_adapter_errors_are_preserved_for_mcp_clients() -> None:
         mailboxes=source.mailboxes,
         messages=source.messages,
     )
-    service = ReadService({"personal": adapter})
+    service = ReadService({"imap-smtp": adapter})
 
     async def exercise() -> None:
         async with Client(create_server(service)) as client:
             result = await client.call_tool(
                 "get_message",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "message_id": source.messages[0].summary.id.serialize(),
                 },
             )

@@ -12,7 +12,7 @@ from threading import Event
 
 import pytest
 
-from personal_mail_mcp.adapters import (
+from imap_smtp_mcp.adapters import (
     AttachmentAdapter,
     DraftStorageAdapter,
     MailReadAdapter,
@@ -20,8 +20,8 @@ from personal_mail_mcp.adapters import (
     OperationContext,
     OutboundDeliveryAdapter,
 )
-from personal_mail_mcp.config import EndpointSettings, ImapSmtpAccount
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.config import EndpointSettings, ImapSmtpAccount
+from imap_smtp_mcp.domain import (
     AttachmentMetadata,
     BodyVariants,
     Draft,
@@ -30,8 +30,8 @@ from personal_mail_mcp.domain import (
     Participant,
     SearchQuery,
 )
-from personal_mail_mcp.imap_smtp import ImapSmtpAdapter, ImapSmtpError
-from personal_mail_mcp.secrets import SecretReference, SecretValue
+from imap_smtp_mcp.imap_smtp import ImapSmtpAdapter, ImapSmtpError
+from imap_smtp_mcp.secrets import SecretReference, SecretValue
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
@@ -162,7 +162,7 @@ class FakeSmtp:
 
 def account(*, tls: bool = True, auth_mode: str = "password") -> ImapSmtpAccount:
     return ImapSmtpAccount(
-        id="personal",
+        id="imap-smtp",
         type="imap-smtp",
         sender_addresses=("owner@example.com",),
         mailboxes=("INBOX", "Archive", "Drafts"),
@@ -177,7 +177,7 @@ def account(*, tls: bool = True, auth_mode: str = "password") -> ImapSmtpAccount
 def draft(*, attachments=(), subject: str = "A subject") -> Draft:
     return Draft(
         id="draft-1",
-        account_id="personal",
+        account_id="imap-smtp",
         sender=Participant("owner@example.com", "Owner"),
         to=(Participant("to@example.com"),),
         cc=(Participant("cc@example.com"),),
@@ -278,7 +278,7 @@ def test_search_parses_mime_and_uses_uidvalidity_identity() -> None:
     )
 
     summary = page.items[0]
-    assert summary.id == ImapMessageId("personal", "INBOX", 101, 2)
+    assert summary.id == ImapMessageId("imap-smtp", "INBOX", 101, 2)
     assert summary.sender == Participant("sender@example.com", "Sender Person")
     assert summary.recipients == (
         Participant("owner@example.com", "Owner"),
@@ -291,7 +291,7 @@ def test_search_parses_mime_and_uses_uidvalidity_identity() -> None:
 
 def test_get_message_and_attachment_parse_full_mime() -> None:
     harness = Harness()
-    source = ImapMessageId("personal", "INBOX", 101, 1)
+    source = ImapMessageId("imap-smtp", "INBOX", 101, 1)
     value = harness.adapter()
 
     message = run(value.get_message(source, OperationContext(5)))
@@ -309,7 +309,7 @@ def test_stale_uidvalidity_and_foreign_scope_are_rejected() -> None:
     with pytest.raises(ImapSmtpError, match="UIDVALIDITY changed"):
         run(
             value.get_message(
-                ImapMessageId("personal", "INBOX", 99, 1), OperationContext(5)
+                ImapMessageId("imap-smtp", "INBOX", 99, 1), OperationContext(5)
             )
         )
     with pytest.raises(ImapSmtpError, match="another configured account"):
@@ -322,10 +322,13 @@ def test_stale_uidvalidity_and_foreign_scope_are_rejected() -> None:
 
 def test_smtp_builds_plain_html_recipient_and_attachment_mime() -> None:
     metadata = AttachmentMetadata("local-1", "notes.txt", "text/plain", 5)
+    inline = AttachmentMetadata(
+        "local-2", "logo.png", "image/png", 5, inline=True, content_id="logo"
+    )
     harness = Harness()
     result = run(
         harness.adapter(loader=lambda item: b"hello").send(
-            draft(attachments=(metadata,)), OperationContext(8)
+            draft(attachments=(metadata, inline)), OperationContext(8)
         )
     )
 
@@ -339,7 +342,12 @@ def test_smtp_builds_plain_html_recipient_and_attachment_mime() -> None:
     assert message["Reply-To"] == "replies@example.com"
     assert message.get_body(("plain",)).get_content() == "plain outbound\n"
     assert message.get_body(("html",)).get_content() == "<p>html outbound</p>\n"
-    assert next(message.iter_attachments()).get_payload(decode=True) == b"hello"
+    attachments = list(message.iter_attachments())
+    assert attachments[0].get_payload(decode=True) == b"hello"
+    inline_part = next(
+        part for part in message.walk() if part["Content-ID"] == "<logo>"
+    )
+    assert inline_part["Content-Disposition"] == 'inline; filename="logo.png"'
     assert harness.smtp_connections == [("smtp.example.com", 465, 8)]
 
 
@@ -351,7 +359,7 @@ def test_reply_and_forward_preserve_rfc_threading_headers(operation: str) -> Non
         message_id="<parent@example.com>",
         references="<root@example.com>",
     )
-    source = ImapMessageId("personal", "INBOX", 101, 1)
+    source = ImapMessageId("imap-smtp", "INBOX", 101, 1)
 
     run(
         getattr(harness.adapter(), operation)(

@@ -33,13 +33,13 @@ def _aware(value: datetime, field_name: str) -> None:
 def _encode_identifier(kind: str, values: dict[str, object]) -> str:
     raw = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
     encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"personal-mail:{kind}:{encoded}"
+    return f"imap-smtp-mcp:{kind}:{encoded}"
 
 
 def _decode_identifier(value: str, expected_kind: str) -> dict[str, object]:
     try:
         prefix, kind, encoded = value.split(":", 2)
-        if prefix != "personal-mail" or kind != expected_kind:
+        if prefix != "imap-smtp-mcp" or kind != expected_kind:
             raise ValueError
         padding = "=" * (-len(encoded) % 4)
         decoded = base64.b64decode(encoded + padding, altchars=b"-_", validate=True)
@@ -142,9 +142,9 @@ MessageId = ProviderMessageId | ImapMessageId
 
 def parse_message_id(value: str) -> MessageId:
     """Parse either supported serialized message identifier."""
-    if value.startswith("personal-mail:imap:"):
+    if value.startswith("imap-smtp-mcp:imap:"):
         return ImapMessageId.parse(value)
-    if value.startswith("personal-mail:provider:"):
+    if value.startswith("imap-smtp-mcp:provider:"):
         return ProviderMessageId.parse(value)
     raise DomainValidationError("Malformed message identifier.")
 
@@ -283,6 +283,7 @@ class Draft:
     reply_to: MessageId | None = None
     forward_of: MessageId | None = None
     attachments: tuple[AttachmentMetadata, ...] = ()
+    headers: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _required(self.id, "draft id")

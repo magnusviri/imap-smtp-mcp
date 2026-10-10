@@ -3,7 +3,7 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from personal_mail_mcp.runtime import ConfiguredExecutor, default_state_directory
+from imap_smtp_mcp.runtime import ConfiguredExecutor, default_state_directory
 
 
 class RecordingService:
@@ -35,20 +35,20 @@ def test_configured_executor_dispatches_read_and_outbound_tools() -> None:
 def test_state_directory_honors_explicit_and_xdg_locations() -> None:
     assert (
         default_state_directory(
-            {"PERSONAL_MAIL_MCP_STATE_DIR": "/private/mail-state"}
+            {"IMAP_SMTP_MCP_STATE_DIR": "/private/mail-state"}
         ).as_posix()
         == "/private/mail-state"
     )
     assert (
         default_state_directory({"XDG_STATE_HOME": "/private/state"}).as_posix()
-        == "/private/state/personal-mail-mcp"
+        == "/private/state/imap-smtp-mcp"
     )
 
 
 @pytest.mark.parametrize(
     "environment",
     [
-        {"PERSONAL_MAIL_MCP_STATE_DIR": "relative/state"},
+        {"IMAP_SMTP_MCP_STATE_DIR": "relative/state"},
         {"XDG_STATE_HOME": "relative/state"},
     ],
 )

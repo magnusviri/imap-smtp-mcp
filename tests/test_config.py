@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import copy
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from personal_mail_mcp.config import (
+from imap_smtp_mcp.config import (
     ConfigurationError,
     ImapSmtpAccount,
     load_config,
     parse_config,
     validate_main,
 )
-from personal_mail_mcp.secrets import (
+from imap_smtp_mcp.secrets import (
     KeyringAltSecretProvider,
     SecretReference,
     SecretResolutionError,
@@ -27,16 +28,16 @@ def valid_config() -> dict[str, object]:
     return {
         "server": {
             "request_timeout_seconds": 20,
-            "keychain_service": "personal-mail-test",
+            "keychain_service": "imap-smtp-mcp-test",
         },
         "accounts": [
             {
-                "id": "personal",
+                "id": "imap-smtp",
                 "type": "imap-smtp",
                 "sender_addresses": ["me@example.com"],
                 "mailboxes": ["INBOX"],
                 "username": "me@example.com",
-                "secret_ref": "personal-mail",
+                "secret_ref": "imap-smtp-mcp",
                 "imap": {"host": "imap.example.com", "port": 993, "tls": True},
                 "smtp": {"host": "smtp.example.com", "port": 465, "tls": True},
             },
@@ -60,7 +61,7 @@ def test_valid_configuration_builds_typed_accounts(
     config = parse_config(valid_config)
 
     assert config.server.request_timeout_seconds == 20
-    assert config.server.keychain_service == "personal-mail-test"
+    assert config.server.keychain_service == "imap-smtp-mcp-test"
     work = config.account("work")
     assert isinstance(work, ImapSmtpAccount)
     assert work.imap.port == 993
@@ -83,7 +84,7 @@ def test_outbound_policy_configuration_is_typed(valid_config) -> None:
         "allowed_recipients": ["Friend@Example.NET"],
         "allowed_recipient_domains": ["Example.ORG"],
         "allow_any_recipient": True,
-        "attachment_root": "/tmp/personal-mail-attachments",
+        "attachment_root": "/tmp/imap-smtp-mcp-attachments",
         "max_attachment_bytes": 1234,
         "rate_limit_messages": 4,
         "rate_limit_window_seconds": 90,
@@ -94,7 +95,7 @@ def test_outbound_policy_configuration_is_typed(valid_config) -> None:
     assert policy.allowed_recipients == ("friend@example.net",)
     assert policy.allowed_recipient_domains == ("example.org",)
     assert policy.allow_any_recipient is True
-    assert str(policy.attachment_root) == "/tmp/personal-mail-attachments"
+    assert str(policy.attachment_root) == "/tmp/imap-smtp-mcp-attachments"
     assert policy.max_attachment_bytes == 1234
     assert policy.rate_limit_messages == 4
     assert policy.rate_limit_window_seconds == 90
@@ -126,15 +127,15 @@ def test_loads_documented_toml_shape(tmp_path) -> None:
         """
 [server]
 request_timeout_seconds = 30
-keychain_service = "personal-mail-mcp"
+keychain_service = "imap-smtp-mcp"
 
 [[accounts]]
-id = "personal"
+id = "imap-smtp"
 type = "imap-smtp"
 sender_addresses = ["owner@example.com"]
 mailboxes = ["INBOX", "Sent"]
 username = "owner@example.com"
-secret_ref = "personal-imap-smtp"
+secret_ref = "imap-smtp"
 
 [accounts.imap]
 host = "imap.example.com"
@@ -152,7 +153,7 @@ tls = true
 
     config = load_config(path)
 
-    assert config.accounts[0].id == "personal"
+    assert config.accounts[0].id == "imap-smtp"
 
 
 @pytest.mark.parametrize(
@@ -174,7 +175,7 @@ def test_documented_example_configuration_is_valid(name: str) -> None:
 
 def test_validation_command_reports_success(monkeypatch, capsys) -> None:
     example = Path(__file__).parents[1] / "examples" / "imap-smtp.toml"
-    monkeypatch.setattr(sys, "argv", ["personal-mail-mcp-validate", str(example)])
+    monkeypatch.setattr(sys, "argv", ["imap-smtp-mcp-validate", str(example)])
 
     validate_main()
 
@@ -192,7 +193,7 @@ def test_unknown_account_type_is_rejected(valid_config: dict[str, object]) -> No
 @pytest.mark.parametrize(
     ("field", "duplicate", "message"),
     [
-        ("id", "personal", "Duplicate account ID"),
+        ("id", "imap-smtp", "Duplicate account ID"),
         ("sender_addresses", ["ME@EXAMPLE.COM"], "Duplicate sender address"),
     ],
 )
@@ -279,21 +280,24 @@ def test_keyring_failures_are_redacted() -> None:
         def get_password(self, service, username):
             raise RuntimeError("exposed-secret")
 
-    provider = KeyringAltSecretProvider("personal-mail-test", backend=BrokenBackend())
+    provider = KeyringAltSecretProvider("imap-smtp-mcp-test", backend=BrokenBackend())
     with pytest.raises(SecretResolutionError) as captured:
         provider.resolve(SecretReference("work-mail"))
 
     assert "exposed-secret" not in str(captured.value)
 
 
-def test_keyring_resolves_value_into_redacted_wrapper() -> None:
+def test_keyring_resolves_value_into_redacted_wrapper(caplog) -> None:
     backend = type("Backend", (), {"get_password": lambda *_: "resolved-credential"})()
     provider = KeyringAltSecretProvider(backend=backend)
 
-    resolved = provider.resolve(SecretReference("work-mail"))
+    with caplog.at_level(logging.INFO):
+        resolved = provider.resolve(SecretReference("work-mail"))
 
     assert resolved.reveal() == "resolved-credential"
     assert "resolved-credential" not in repr(resolved)
+    assert "Credential resolved from the encrypted keyring." in caplog.messages
+    assert "resolved-credential" not in caplog.text
 
 
 @dataclass

@@ -9,17 +9,17 @@ import pytest
 from mcp import Client
 from mcp.server.mcpserver.exceptions import ToolError
 
-from personal_mail_mcp.config import parse_config
-from personal_mail_mcp.domain import AccountSummary, ImapMessageId
-from personal_mail_mcp.fake_adapter import FakeMailAdapter
-from personal_mail_mcp.outbound_service import (
+from imap_smtp_mcp.config import parse_config
+from imap_smtp_mcp.domain import AccountSummary, ImapMessageId
+from imap_smtp_mcp.fake_adapter import FakeMailAdapter
+from imap_smtp_mcp.outbound_service import (
     AuditLog,
     GuardedOutboundService,
     InMemoryDraftStore,
     OutboundPolicy,
     SqliteDraftStore,
 )
-from personal_mail_mcp.server import create_server
+from imap_smtp_mcp.server import create_server
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
@@ -41,13 +41,13 @@ def _content(**changes):
 
 def _service(tmp_path, *, policy=None, clock=None):
     adapter = FakeMailAdapter(
-        AccountSummary("personal", "Personal", ("owner@example.com",))
+        AccountSummary("imap-smtp", "IMAP/SMTP", ("owner@example.com",))
     )
     store = InMemoryDraftStore()
     service = GuardedOutboundService(
-        {"personal": adapter},
+        {"imap-smtp": adapter},
         {
-            "personal": policy
+            "imap-smtp": policy
             or OutboundPolicy(
                 sender_addresses=("owner@example.com",),
                 allowed_recipients=("friend@example.net",),
@@ -74,16 +74,16 @@ def test_draft_lifecycle_and_idempotent_send_through_mcp(tmp_path) -> None:
     async def exercise() -> None:
         async with Client(create_server(service)) as client:
             created = await client.call_tool(
-                "create_draft", {"account_id": "personal", "content": _content()}
+                "create_draft", {"account_id": "imap-smtp", "content": _content()}
             )
             assert created.is_error is False
             assert created.structured_content == {
                 "draft_id": "draft-1",
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "status": "draft",
             }
             arguments = {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "draft_id": "draft-1",
                 "confirm_send": True,
                 "idempotency_key": "retry-key",
@@ -97,16 +97,61 @@ def test_draft_lifecycle_and_idempotent_send_through_mcp(tmp_path) -> None:
     assert adapter.deliveries == [("send", "draft-1")]
 
 
+def test_update_draft_headers_sets_and_removes_safe_custom_headers(tmp_path) -> None:
+    service, _adapter, store = _service(tmp_path)
+    created = _run(
+        service.execute(
+            "create_draft", {"account_id": "imap-smtp", "content": _content()}
+        )
+    )
+
+    updated = _run(
+        service.execute(
+            "update_draft_headers",
+            {
+                "account_id": "imap-smtp",
+                "draft_id": created["draft_id"],
+                "headers": {"X-Project": "MCP"},
+            },
+        )
+    )
+    assert updated["status"] == "draft"
+    assert store.get(created["draft_id"]).headers == (("X-Project", "MCP"),)
+
+    _run(
+        service.execute(
+            "update_draft_headers",
+            {
+                "account_id": "imap-smtp",
+                "draft_id": created["draft_id"],
+                "headers": {"X-Project": None},
+            },
+        )
+    )
+    assert store.get(created["draft_id"]).headers == ()
+    with pytest.raises(ToolError, match="protected"):
+        _run(
+            service.execute(
+                "update_draft_headers",
+                {
+                    "account_id": "imap-smtp",
+                    "draft_id": created["draft_id"],
+                    "headers": {"From": "attacker@example.com"},
+                },
+            )
+        )
+
+
 def test_reply_and_forward_keep_source_reference_and_share_guarded_path(
     tmp_path,
 ) -> None:
     service, adapter, store = _service(tmp_path)
-    source = ImapMessageId("personal", "INBOX", 7, 10).serialize()
+    source = ImapMessageId("imap-smtp", "INBOX", 7, 10).serialize()
     reply = _run(
         service.execute(
             "create_draft",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "content": _content(subject="Re: hello"),
                 "reply_to_message_id": source,
                 "forward_of_message_id": None,
@@ -118,7 +163,7 @@ def test_reply_and_forward_keep_source_reference_and_share_guarded_path(
         service.execute(
             "send_message",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "draft_id": reply["draft_id"],
                 "confirm_send": True,
                 "idempotency_key": "reply-draft",
@@ -126,7 +171,7 @@ def test_reply_and_forward_keep_source_reference_and_share_guarded_path(
         )
     )
     direct = {
-        "account_id": "personal",
+        "account_id": "imap-smtp",
         "message_id": source,
         "content": _content(subject="Fwd: hello"),
         "confirm_send": True,
@@ -158,14 +203,14 @@ def test_policy_denials_never_reach_provider(
 ) -> None:
     service, adapter, _store = _service(tmp_path, policy=policy)
     created = _run(
-        service.execute("create_draft", {"account_id": "personal", "content": content})
+        service.execute("create_draft", {"account_id": "imap-smtp", "content": content})
     )
     with pytest.raises(ToolError, match=message):
         _run(
             service.execute(
                 "send_message",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "draft_id": created["draft_id"],
                     "confirm_send": True,
                     "idempotency_key": "denied",
@@ -185,7 +230,7 @@ def test_allow_any_recipient_bypasses_recipient_allowlist(tmp_path) -> None:
         service.execute(
             "create_draft",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "content": _content(to=[{"address": "outside@example.org"}]),
             },
         )
@@ -195,7 +240,7 @@ def test_allow_any_recipient_bypasses_recipient_allowlist(tmp_path) -> None:
         service.execute(
             "send_message",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "draft_id": created["draft_id"],
                 "confirm_send": True,
                 "idempotency_key": "unrestricted-recipient",
@@ -221,13 +266,13 @@ def test_confirmation_attachment_limit_and_rate_limit_prevent_send(tmp_path) -> 
         service.execute(
             "create_draft",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "content": _content(attachment_paths=[str(attachment)]),
             },
         )
     )
     base = {
-        "account_id": "personal",
+        "account_id": "imap-smtp",
         "draft_id": created["draft_id"],
         "idempotency_key": "attachment",
     }
@@ -239,14 +284,14 @@ def test_confirmation_attachment_limit_and_rate_limit_prevent_send(tmp_path) -> 
 
     plain = _run(
         service.execute(
-            "create_draft", {"account_id": "personal", "content": _content()}
+            "create_draft", {"account_id": "imap-smtp", "content": _content()}
         )
     )
     _run(
         service.execute(
             "send_message",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "draft_id": plain["draft_id"],
                 "confirm_send": True,
                 "idempotency_key": "first",
@@ -258,7 +303,7 @@ def test_confirmation_attachment_limit_and_rate_limit_prevent_send(tmp_path) -> 
             service.execute(
                 "send_message",
                 {
-                    "account_id": "personal",
+                    "account_id": "imap-smtp",
                     "draft_id": plain["draft_id"],
                     "confirm_send": True,
                     "idempotency_key": "second",
@@ -272,14 +317,14 @@ def test_audit_log_is_redacted_and_local_store_round_trips(tmp_path) -> None:
     service, _adapter, store = _service(tmp_path)
     created = _run(
         service.execute(
-            "create_draft", {"account_id": "personal", "content": _content()}
+            "create_draft", {"account_id": "imap-smtp", "content": _content()}
         )
     )
     _run(
         service.execute(
             "send_message",
             {
-                "account_id": "personal",
+                "account_id": "imap-smtp",
                 "draft_id": created["draft_id"],
                 "confirm_send": True,
                 "idempotency_key": "audited",
@@ -289,7 +334,7 @@ def test_audit_log_is_redacted_and_local_store_round_trips(tmp_path) -> None:
     text = (tmp_path / "audit.jsonl").read_text()
     record = json.loads(text)
     assert record["action"] == "send_message"
-    assert record["account_id"] == "personal"
+    assert record["account_id"] == "imap-smtp"
     assert record["idempotency_key"] == "audited"
     assert len(record["recipient_hashes"][0]) == 64
     assert "friend@example.net" not in text
@@ -308,12 +353,12 @@ def test_runtime_policy_is_built_from_validated_account_configuration() -> None:
         {
             "accounts": [
                 {
-                    "id": "personal",
+                    "id": "imap-smtp",
                     "type": "imap-smtp",
                     "sender_addresses": ["owner@example.com"],
                     "mailboxes": ["Inbox"],
                     "username": "owner@example.com",
-                    "secret_ref": "personal-mail",
+                    "secret_ref": "imap-smtp-mcp",
                     "imap": {"host": "imap.example.com", "port": 993, "tls": True},
                     "smtp": {"host": "smtp.example.com", "port": 465, "tls": True},
                     "outbound_policy": {

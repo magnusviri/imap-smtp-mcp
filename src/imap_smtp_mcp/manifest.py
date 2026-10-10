@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from personal_mail_mcp.server import SERVER_INSTRUCTIONS, SERVER_NAME, create_server
+from imap_smtp_mcp.server import SERVER_INSTRUCTIONS, SERVER_NAME, create_server
 
 DEFAULT_MANIFEST_PATH = Path(__file__).with_name("manifest.json")
 
@@ -61,6 +61,6 @@ def check_main(arguments: Sequence[str] | None = None) -> None:
     path = _path(arguments)
     if not check_manifest(path):
         raise SystemExit(
-            f"MCP manifest is stale: run personal-mail-mcp-generate-manifest "
+            f"MCP manifest is stale: run imap-smtp-mcp-generate-manifest "
             f"--output {path}"
         )

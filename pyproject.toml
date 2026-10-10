@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "personal-mail-mcp"
+name = "imap-smtp-mcp"
 version = "0.1.0"
-description = "A private, local MCP server for personal email"
+description = "A private, local MCP server for IMAP/SMTP email"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,16 +13,17 @@ dependencies = [
   "keyring>=25,<26",
   "keyrings.alt>=5,<6",
   "pydantic>=2.12,<3",
+  "pycryptodome>=3.20,<4",
   "uvicorn>=0.30,<1",
   "tomli>=2.2,<3; python_version < '3.11'",
 ]
 
 [project.scripts]
-personal-mail-mcp = "personal_mail_mcp.server:main"
-personal-mail-mcp-validate = "personal_mail_mcp.config:validate_main"
-personal-mail-mcp-store-secret = "personal_mail_mcp.secrets:store_main"
-personal-mail-mcp-generate-manifest = "personal_mail_mcp.manifest:generate_main"
-personal-mail-mcp-check-manifest = "personal_mail_mcp.manifest:check_main"
+imap-smtp-mcp = "imap_smtp_mcp.server:main"
+imap-smtp-mcp-validate = "imap_smtp_mcp.config:validate_main"
+imap-smtp-mcp-store-secret = "imap_smtp_mcp.secrets:store_main"
+imap-smtp-mcp-generate-manifest = "imap_smtp_mcp.manifest:generate_main"
+imap-smtp-mcp-check-manifest = "imap_smtp_mcp.manifest:check_main"
 
 [dependency-groups]
 dev = [
@@ -30,7 +31,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/personal_mail_mcp"]
+packages = ["src/imap_smtp_mcp"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"

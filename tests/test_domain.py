@@ -6,7 +6,7 @@ from threading import Event
 
 import pytest
 
-from personal_mail_mcp.adapters import (
+from imap_smtp_mcp.adapters import (
     AttachmentAdapter,
     DraftStorageAdapter,
     MailReadAdapter,
@@ -14,7 +14,7 @@ from personal_mail_mcp.adapters import (
     OperationContext,
     OutboundDeliveryAdapter,
 )
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.domain import (
     AccountSummary,
     Attachment,
     AttachmentMetadata,
@@ -32,7 +32,7 @@ from personal_mail_mcp.domain import (
     ThreadReference,
     parse_message_id,
 )
-from personal_mail_mcp.fake_adapter import FakeAdapterError, FakeMailAdapter
+from imap_smtp_mcp.fake_adapter import FakeAdapterError, FakeMailAdapter
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
@@ -44,12 +44,12 @@ def run(coroutine):
 def make_message(
     uid: int, subject: str, *, labels: tuple[str, ...] = ("inbox",)
 ) -> Message:
-    message_id = ImapMessageId("personal", "inbox", 9001, uid)
+    message_id = ImapMessageId("imap-smtp", "inbox", 9001, uid)
     attachment = AttachmentMetadata("report", "report.txt", "text/plain", 4)
     return Message(
         summary=MessageSummary(
             id=message_id,
-            account_id="personal",
+            account_id="imap-smtp",
             mailbox_id="inbox",
             subject=subject,
             sender=Participant("sender@example.com", "Sender"),
@@ -73,7 +73,7 @@ def make_message(
 def make_draft(draft_id: str = "draft-1") -> Draft:
     return Draft(
         id=draft_id,
-        account_id="personal",
+        account_id="imap-smtp",
         sender=Participant("owner@example.com", "Owner"),
         to=(Participant("recipient@example.com"),),
         cc=(),
@@ -81,7 +81,7 @@ def make_draft(draft_id: str = "draft-1") -> Draft:
         subject="A draft",
         body=BodyVariants(text="Draft body"),
         created_at=NOW,
-        reply_to=ImapMessageId("personal", "inbox", 9001, 1),
+        reply_to=ImapMessageId("imap-smtp", "inbox", 9001, 1),
     )
 
 
@@ -95,10 +95,10 @@ def make_adapter() -> FakeMailAdapter:
         metadata=messages[0].summary.attachments[0], content=b"data"
     )
     return FakeMailAdapter(
-        account=AccountSummary("personal", "Personal", ("owner@example.com",)),
+        account=AccountSummary("imap-smtp", "IMAP/SMTP", ("owner@example.com",)),
         mailboxes=(
-            Mailbox("inbox", "personal", "Inbox", ("inbox",)),
-            Mailbox("archive", "personal", "Archive", ("archive",)),
+            Mailbox("inbox", "imap-smtp", "Inbox", ("inbox",)),
+            Mailbox("archive", "imap-smtp", "Archive", ("archive",)),
         ),
         messages=messages,
         attachments={(messages[0].summary.id.serialize(), "report"): attachment},
@@ -109,7 +109,7 @@ def make_adapter() -> FakeMailAdapter:
     "identifier",
     [
         ProviderMessageId("apple", "Inbox", "provider:item/42"),
-        ImapMessageId("personal", "INBOX/Receipts", 4294967295, 77),
+        ImapMessageId("imap-smtp", "INBOX/Receipts", 4294967295, 77),
     ],
 )
 def test_message_identifier_round_trip(identifier) -> None:
@@ -117,8 +117,8 @@ def test_message_identifier_round_trip(identifier) -> None:
 
 
 def test_imap_uidvalidity_is_part_of_identity() -> None:
-    old = ImapMessageId("personal", "inbox", 10, 4)
-    reused = ImapMessageId("personal", "inbox", 11, 4)
+    old = ImapMessageId("imap-smtp", "inbox", 10, 4)
+    reused = ImapMessageId("imap-smtp", "inbox", 11, 4)
 
     assert old != reused
     assert old.serialize() != reused.serialize()
@@ -133,7 +133,7 @@ def test_imap_uidvalidity_is_part_of_identity() -> None:
         (
             lambda: MessageSummary(
                 id=ImapMessageId("other", "inbox", 1, 1),
-                account_id="personal",
+                account_id="imap-smtp",
                 mailbox_id="inbox",
                 subject="",
                 sender=Participant("sender@example.com"),
@@ -146,8 +146,8 @@ def test_imap_uidvalidity_is_part_of_identity() -> None:
         ),
         (
             lambda: MessageSummary(
-                id=ImapMessageId("personal", "inbox", 1, 1),
-                account_id="personal",
+                id=ImapMessageId("imap-smtp", "inbox", 1, 1),
+                account_id="imap-smtp",
                 mailbox_id="inbox",
                 subject="",
                 sender=Participant("sender@example.com"),
@@ -168,7 +168,7 @@ def test_model_validation(factory, message: str) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["", "personal-mail:imap:nope", "personal-mail:other:e30"],
+    ["", "imap-smtp-mcp:imap:nope", "imap-smtp-mcp:other:e30"],
 )
 def test_malformed_message_identifiers_are_rejected(value: str) -> None:
     with pytest.raises(DomainValidationError, match="Malformed"):
@@ -188,7 +188,7 @@ def test_fake_read_and_attachment_contract() -> None:
     adapter = make_adapter()
     context = OperationContext(5)
 
-    assert run(adapter.get_account(context)).id == "personal"
+    assert run(adapter.get_account(context)).id == "imap-smtp"
     assert [
         item.id for item in run(adapter.list_mailboxes(PageRequest(), context)).items
     ] == [

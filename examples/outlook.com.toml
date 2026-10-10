@@ -1,7 +1,7 @@
 # Outlook.com endpoint reference. Outlook.com requires OAuth2/Modern Auth.
 # Store a short-lived OAuth2 access token in Keychain under this reference.
 [server]
-keychain_service = "personal-mail-mcp"
+keychain_service = "imap-smtp-mcp"
 
 [[accounts]]
 id = "outlook-com"

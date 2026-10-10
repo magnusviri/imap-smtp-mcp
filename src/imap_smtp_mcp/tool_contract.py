@@ -23,6 +23,18 @@ class MessageContentInput(ContractModel):
     html: str | None = Field(default=None, description="HTML message body.")
 
 
+class AttachmentInput(ContractModel):
+    path: str = Field(description="Path below the configured attachment root.")
+    inline: bool = Field(
+        default=False,
+        description="Embed in the message body instead of presenting as a download.",
+    )
+    content_id: str | None = Field(
+        default=None,
+        description="Content ID referenced by HTML as cid:CONTENT_ID; required for inline attachments.",
+    )
+
+
 class DraftContentInput(ContractModel):
     sender: str = Field(description="Configured sender address owned by the account.")
     to: list[ParticipantInput] = Field(description="Primary recipients.")
@@ -37,9 +49,42 @@ class DraftContentInput(ContractModel):
     )
     subject: str = Field(description="Message subject, which may be empty.")
     body: MessageContentInput
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Additional safe RFC email headers. Standard routing, identity, and "
+            "threading headers are managed by the server and cannot be overridden."
+        ),
+    )
+    attachments: list[AttachmentInput] = Field(
+        default_factory=list,
+        description="Attachments with optional inline content-ID support.",
+    )
     attachment_paths: list[str] = Field(
         default_factory=list,
-        description="Local attachment paths; policy validation occurs before reading.",
+        description="Deprecated shorthand for non-inline attachments."
+        " Policy validation occurs before reading.",
+    )
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "sender": "owner@example.com",
+                    "to": [{"address": "recipient@example.com", "name": "Recipient"}],
+                    "subject": "Hello",
+                    "body": {"text": "Plain-text body", "html": "<p>HTML body</p>"},
+                    "headers": {"X-Project": "Example"},
+                    "attachments": [
+                        {
+                            "path": "logo.png",
+                            "inline": True,
+                            "content_id": "company-logo",
+                        }
+                    ],
+                }
+            ]
+        },
     )
 
 

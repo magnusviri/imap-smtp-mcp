@@ -1,4 +1,4 @@
-"""Validated configuration for the local personal-mail server."""
+"""Validated configuration for the local imap-smtp-mcp server."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
     import tomli as tomllib
 
-from personal_mail_mcp.secrets import (
+from imap_smtp_mcp.secrets import (
     KeyringAltSecretProvider,
     SecretProvider,
     SecretReference,
@@ -45,7 +45,7 @@ class ServerSettings:
     """Settings shared by all local accounts."""
 
     request_timeout_seconds: float = 30.0
-    keychain_service: str = "personal-mail-mcp"
+    keychain_service: str = "imap-smtp-mcp"
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ Account = ImapSmtpAccount
 
 
 @dataclass(frozen=True)
-class PersonalMailConfig:
+class ImapSmtpConfig:
     """Complete validated configuration with no resolved credential material."""
 
     server: ServerSettings
@@ -134,8 +134,8 @@ class PersonalMailConfig:
             ) from None
 
 
-def load_config(path: str | Path) -> PersonalMailConfig:
-    """Read and validate a personal-mail TOML configuration file."""
+def load_config(path: str | Path) -> ImapSmtpConfig:
+    """Read and validate a imap-smtp-mcp TOML configuration file."""
     config_path = Path(path)
     try:
         with config_path.open("rb") as config_file:
@@ -151,19 +151,19 @@ def load_config(path: str | Path) -> PersonalMailConfig:
 def validate_main() -> None:
     """Validate a configuration without resolving credentials or contacting mail."""
     parser = argparse.ArgumentParser(
-        description="Validate a personal-mail-mcp TOML configuration."
+        description="Validate a imap-smtp-mcp TOML configuration."
     )
     parser.add_argument("path", help="Path to config.toml")
     arguments = parser.parse_args()
     try:
         config = load_config(arguments.path)
     except ConfigurationError as error:
-        print(f"Invalid personal-mail-mcp configuration: {error}", file=sys.stderr)
+        print(f"Invalid imap-smtp-mcp configuration: {error}", file=sys.stderr)
         raise SystemExit(2) from None
     print(f"Configuration is valid ({len(config.accounts)} account(s)).")
 
 
-def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
+def parse_config(raw: Mapping[str, Any]) -> ImapSmtpConfig:
     """Validate an already decoded TOML mapping."""
     _reject_plaintext_secrets(raw)
     server = _parse_server(_mapping(raw.get("server", {}), "server"))
@@ -224,7 +224,7 @@ def parse_config(raw: Mapping[str, Any]) -> PersonalMailConfig:
                 f"Account {account_id!r} has unknown type {account_type!r}; "
                 "expected 'imap-smtp'."
             )
-    return PersonalMailConfig(server=server, accounts=tuple(accounts))
+    return ImapSmtpConfig(server=server, accounts=tuple(accounts))
 
 
 def _parse_auth_mode(value: Any, account_id: str) -> Literal["password", "oauth2"]:
@@ -243,7 +243,7 @@ def _parse_server(data: Mapping[str, Any]) -> ServerSettings:
         or timeout <= 0
     ):
         raise ConfigurationError("server.request_timeout_seconds must be positive.")
-    service = data.get("keychain_service", "personal-mail-mcp")
+    service = data.get("keychain_service", "imap-smtp-mcp")
     if not isinstance(service, str) or not service.strip():
         raise ConfigurationError("server.keychain_service must be a non-empty string.")
     return ServerSettings(float(timeout), service.strip())

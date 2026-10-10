@@ -1,0 +1,8 @@
+{
+  "imap-smtp-mcp": {
+    "url": "https://127.0.0.1:8787/mcp",
+    "headers": {
+      "Authorization": "Bearer REPLACE_WITH_IMAP_SMTP_MCP_TOKEN"
+    }
+  }
+}

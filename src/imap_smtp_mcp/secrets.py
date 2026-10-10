@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
 from typing import Protocol
 
 from keyrings.alt.file import EncryptedKeyring
+
+
+logger = logging.getLogger(__name__)
 
 
 class SecretResolutionError(RuntimeError):
@@ -55,7 +59,7 @@ class SecretProvider(Protocol):
 class KeyringAltSecretProvider:
     """Resolve secrets from the encrypted cross-platform keyrings.alt backend."""
 
-    def __init__(self, service: str = "personal-mail-mcp", *, backend=None) -> None:
+    def __init__(self, service: str = "imap-smtp-mcp", *, backend=None) -> None:
         self._service = service
         self._backend = backend or EncryptedKeyring()
 
@@ -70,6 +74,7 @@ class KeyringAltSecretProvider:
             raise SecretResolutionError(
                 f"Keyring entry {reference.name!r} was not found or is empty."
             )
+        logger.info("Credential resolved from the encrypted keyring.")
         return SecretValue(value)
 
 
@@ -77,9 +82,9 @@ def store_main() -> None:
     """Store a secret without passing its value through argv or configuration."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Store a personal-mail secret.")
+    parser = argparse.ArgumentParser(description="Store a imap-smtp-mcp secret.")
     parser.add_argument("reference", help="The config.toml secret_ref value")
-    parser.add_argument("--service", default="personal-mail-mcp")
+    parser.add_argument("--service", default="imap-smtp-mcp")
     arguments = parser.parse_args()
     value = getpass("Credential or OAuth access token: ")
     if not value:

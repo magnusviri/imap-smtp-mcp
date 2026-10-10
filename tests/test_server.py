@@ -6,9 +6,9 @@ import anyio
 from mcp import Client
 from starlette.testclient import TestClient
 
-from personal_mail_mcp import server as server_module
-from personal_mail_mcp.manifest import check_manifest, write_manifest
-from personal_mail_mcp.server import (
+from imap_smtp_mcp import server as server_module
+from imap_smtp_mcp.manifest import check_manifest, write_manifest
+from imap_smtp_mcp.server import (
     SERVER_INSTRUCTIONS,
     SERVER_NAME,
     BearerAuthMiddleware,
@@ -21,6 +21,7 @@ EXPECTED_TOOLS = {
     "search_messages",
     "get_message",
     "create_draft",
+    "update_draft_headers",
     "send_message",
     "reply_to_message",
     "forward_message",
@@ -45,8 +46,8 @@ class RecordingExecutor:
             return {
                 "accounts": [
                     {
-                        "id": "personal",
-                        "display_name": "Personal",
+                        "id": "imap-smtp",
+                        "display_name": "IMAP/SMTP",
                         "sender_addresses": ["owner@example.com"],
                     }
                 ]
@@ -61,6 +62,8 @@ def test_server_initializes_over_in_memory_transport() -> None:
             assert client.server_info.name == SERVER_NAME
             assert client.protocol_version is not None
             assert client.instructions == SERVER_INSTRUCTIONS
+            assert "call list_accounts" in client.instructions
+            assert "create_draft first" in client.instructions
 
     anyio.run(initialize)
 
@@ -99,6 +102,11 @@ def test_live_catalog_has_unique_complete_schemas_and_annotations() -> None:
         create = next(tool for tool in result.tools if tool.name == "create_draft")
         assert create.annotations is not None
         assert create.annotations.open_world_hint is False
+        draft_schema = create.input_schema["$defs"]["DraftContentInput"]
+        assert draft_schema["examples"][0]["body"] == {
+            "text": "Plain-text body",
+            "html": "<p>HTML body</p>",
+        }
         for name in ("send_message", "reply_to_message", "forward_message"):
             send = next(tool for tool in result.tools if tool.name == name)
             assert send.annotations is not None
@@ -119,8 +127,8 @@ def test_tool_executes_through_sdk_with_structured_content() -> None:
         assert result.structured_content == {
             "accounts": [
                 {
-                    "id": "personal",
-                    "display_name": "Personal",
+                    "id": "imap-smtp",
+                    "display_name": "IMAP/SMTP",
                     "sender_addresses": ["owner@example.com"],
                 }
             ]
@@ -149,6 +157,22 @@ def test_checked_in_manifest_is_fresh() -> None:
     assert check_manifest()
 
 
+def test_http_settings_reads_bearer_token_from_secret_file(
+    monkeypatch, tmp_path
+) -> None:
+    token_file = tmp_path / "mcp-bearer-token"
+    token_file.write_text("x" * 32 + "\n", encoding="utf-8")
+    monkeypatch.delenv("IMAP_SMTP_MCP_TOKEN", raising=False)
+    monkeypatch.setenv("IMAP_SMTP_MCP_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("IMAP_SMTP_MCP_TLS_CERT_FILE", "/tls/cert.pem")
+    monkeypatch.setenv("IMAP_SMTP_MCP_TLS_KEY_FILE", "/tls/key.pem")
+    monkeypatch.setattr(server_module.Path, "is_file", lambda _: True)
+
+    _, _, token, _, _ = server_module._http_settings()
+
+    assert token == "x" * 32
+
+
 def test_packaged_executable_starts_authenticated_loopback_http(monkeypatch) -> None:
     calls = []
 
@@ -159,11 +183,11 @@ def test_packaged_executable_starts_authenticated_loopback_http(monkeypatch) -> 
 
     monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
     monkeypatch.setattr(server_module, "create_server", Runner)
-    monkeypatch.delenv("PERSONAL_MAIL_MCP_CONFIG", raising=False)
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_TOKEN", "x" * 32)
+    monkeypatch.delenv("IMAP_SMTP_MCP_CONFIG", raising=False)
+    monkeypatch.setenv("IMAP_SMTP_MCP_TOKEN", "x" * 32)
     monkeypatch.setattr(server_module.Path, "is_file", lambda _: True)
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_CERT_FILE", "/tls/cert.pem")
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_KEY_FILE", "/tls/key.pem")
+    monkeypatch.setenv("IMAP_SMTP_MCP_TLS_CERT_FILE", "/tls/cert.pem")
+    monkeypatch.setenv("IMAP_SMTP_MCP_TLS_KEY_FILE", "/tls/key.pem")
     monkeypatch.setattr(
         server_module.uvicorn, "run", lambda app, **kwargs: calls.append(kwargs)
     )
@@ -191,11 +215,11 @@ def test_packaged_executable_loads_configured_executor(monkeypatch) -> None:
             calls.append(kwargs)
             return type("App", (), {"add_middleware": lambda *args, **kwargs: None})()
 
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_CONFIG", "/private/config.toml")
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_TOKEN", "x" * 32)
+    monkeypatch.setenv("IMAP_SMTP_MCP_CONFIG", "/private/config.toml")
+    monkeypatch.setenv("IMAP_SMTP_MCP_TOKEN", "x" * 32)
     monkeypatch.setattr(server_module.Path, "is_file", lambda _: True)
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_CERT_FILE", "/tls/cert.pem")
-    monkeypatch.setenv("PERSONAL_MAIL_MCP_TLS_KEY_FILE", "/tls/key.pem")
+    monkeypatch.setenv("IMAP_SMTP_MCP_TLS_CERT_FILE", "/tls/cert.pem")
+    monkeypatch.setenv("IMAP_SMTP_MCP_TLS_KEY_FILE", "/tls/key.pem")
     monkeypatch.setattr(server_module, "configure_diagnostics", lambda: None)
     monkeypatch.setattr(server_module, "load_config", lambda path: ("config", path))
     monkeypatch.setattr(

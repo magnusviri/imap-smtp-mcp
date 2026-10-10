@@ -6,8 +6,8 @@ import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from personal_mail_mcp.adapters import MailAdapterError, OperationContext
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.adapters import MailAdapterError, OperationContext
+from imap_smtp_mcp.domain import (
     AccountSummary,
     Attachment,
     DeliveryResult,

@@ -17,9 +17,9 @@ from email.parser import BytesParser
 from email.utils import format_datetime, getaddresses, make_msgid, parsedate_to_datetime
 from typing import Protocol
 
-from personal_mail_mcp.adapters import MailAdapterError, OperationContext
-from personal_mail_mcp.config import ImapSmtpAccount
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.adapters import MailAdapterError, OperationContext
+from imap_smtp_mcp.config import ImapSmtpAccount
+from imap_smtp_mcp.domain import (
     AccountSummary,
     Attachment,
     AttachmentMetadata,
@@ -37,7 +37,7 @@ from personal_mail_mcp.domain import (
     SearchQuery,
     ThreadReference,
 )
-from personal_mail_mcp.secrets import KeyringAltSecretProvider, SecretProvider
+from imap_smtp_mcp.secrets import KeyringAltSecretProvider, SecretProvider
 
 
 class ImapSmtpError(MailAdapterError):
@@ -198,7 +198,7 @@ class ImapSmtpAdapter:
         account: ImapSmtpAccount,
         *,
         secret_provider: SecretProvider | None = None,
-        keychain_service: str = "personal-mail-mcp",
+        keychain_service: str = "imap-smtp-mcp",
         imap_factory: ImapFactory = _default_imap,
         smtp_factory: SmtpFactory = _default_smtp,
         attachment_loader: AttachmentLoader | None = None,
@@ -508,6 +508,8 @@ class ImapSmtpAdapter:
         message["Subject"] = subject
         message["Date"] = format_datetime(datetime.now(timezone.utc))
         message["Message-ID"] = make_msgid()
+        for name, value in draft.headers:
+            message[name] = value
         if source is not None and source.get("Message-ID"):
             parent = str(source["Message-ID"])
             references = re.findall(r"<[^>]+>", str(source.get("References", "")))
@@ -525,12 +527,19 @@ class ImapSmtpAdapter:
                 )
             content = self._attachment_loader(metadata)
             main, _, subtype = metadata.media_type.partition("/")
-            message.add_attachment(
-                content,
-                maintype=main or "application",
-                subtype=subtype or "octet-stream",
-                filename=metadata.filename,
-            )
+            arguments = {
+                "maintype": main or "application",
+                "subtype": subtype or "octet-stream",
+                "filename": metadata.filename,
+            }
+            if metadata.inline:
+                arguments["disposition"] = "inline"
+                arguments["cid"] = f"<{metadata.content_id}>"
+                html_part = message.get_body(preferencelist=("html",))
+                if html_part is not None:
+                    html_part.add_related(content, **arguments)
+                    continue
+            message.add_attachment(content, **arguments)
         return message
 
     def _deliver(

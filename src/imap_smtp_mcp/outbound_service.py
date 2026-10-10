@@ -20,13 +20,13 @@ from typing import Any, Protocol
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from personal_mail_mcp.adapters import (
+from imap_smtp_mcp.adapters import (
     MailAdapterError,
     OperationContext,
     OutboundDeliveryAdapter,
 )
-from personal_mail_mcp.config import Account
-from personal_mail_mcp.domain import (
+from imap_smtp_mcp.config import Account
+from imap_smtp_mcp.domain import (
     AttachmentMetadata,
     BodyVariants,
     DeliveryResult,
@@ -203,6 +203,8 @@ class GuardedOutboundService:
     ) -> dict[str, Any]:
         if tool_name == "create_draft":
             return self._create_draft(arguments)
+        if tool_name == "update_draft_headers":
+            return self._update_draft_headers(arguments)
         if tool_name not in {"send_message", "reply_to_message", "forward_message"}:
             raise ToolError(
                 f"Tool {tool_name!r} is not available in the outbound service."
@@ -222,6 +224,43 @@ class GuardedOutboundService:
             raise ToolError("A draft cannot be both a reply and a forward.")
         self._drafts.put(draft)
         return {"draft_id": draft.id, "account_id": account_id, "status": "draft"}
+
+    def _update_draft_headers(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        account_id, _adapter, _policy = self._account(arguments)
+        draft_id = arguments.get("draft_id")
+        if not isinstance(draft_id, str) or not draft_id.strip():
+            raise ToolError("A non-empty draft_id is required.")
+        draft = self._drafts.get(draft_id)
+        if draft is None or draft.account_id != account_id:
+            raise ToolError("The requested draft was not found.")
+        try:
+            headers = _headers(arguments.get("headers"), allow_remove=True)
+        except (TypeError, ValueError):
+            raise ToolError("Draft headers are invalid or protected.") from None
+        values = dict(draft.headers)
+        for name, value in headers.items():
+            if value is None:
+                values.pop(name, None)
+            else:
+                values[name] = value
+        updated = Draft(
+            id=draft.id,
+            account_id=draft.account_id,
+            sender=draft.sender,
+            to=draft.to,
+            cc=draft.cc,
+            bcc=draft.bcc,
+            subject=draft.subject,
+            body=draft.body,
+            created_at=draft.created_at,
+            reply_to_address=draft.reply_to_address,
+            reply_to=draft.reply_to,
+            forward_of=draft.forward_of,
+            attachments=draft.attachments,
+            headers=tuple(sorted(values.items())),
+        )
+        self._drafts.put(updated)
+        return {"draft_id": updated.id, "account_id": account_id, "status": "draft"}
 
     async def _deliver(
         self, action: str, arguments: Mapping[str, Any]
@@ -329,8 +368,11 @@ class GuardedOutboundService:
             raise ToolError("Draft content is required.")
         try:
             attachments = tuple(
-                _attachment(path, policy.attachment_root)
-                for path in content.get("attachment_paths", ())
+                _attachment(value, policy.attachment_root)
+                for value in [
+                    *({"path": path} for path in content.get("attachment_paths", ())),
+                    *content.get("attachments", ()),
+                ]
             )
             return Draft(
                 id=self._id_factory(),
@@ -346,6 +388,7 @@ class GuardedOutboundService:
                 reply_to=reply_to,
                 forward_of=forward_of,
                 attachments=attachments,
+                headers=tuple(sorted(_headers(content.get("headers", {})).items())),
             )
         except (DomainValidationError, OSError, TypeError, ValueError):
             raise ToolError("Draft content is invalid.") from None
@@ -411,18 +454,66 @@ def _body(value: Any) -> BodyVariants:
 
 
 def _attachment(value: Any, root: Path | None) -> AttachmentMetadata:
-    if not isinstance(value, str) or not value:
-        raise ValueError
+    if not isinstance(value, Mapping) or not isinstance(value.get("path"), str):
+        raise TypeError
     if root is None:
         raise ValueError
-    path, relative = _attachment_path(value, root)
+    path, relative = _attachment_path(value["path"], root)
     size = path.stat().st_size
+    inline = value.get("inline", False)
+    content_id = value.get("content_id")
+    if not isinstance(inline, bool) or (
+        content_id is not None and not isinstance(content_id, str)
+    ):
+        raise ValueError
+    if inline and (not content_id or "\r" in content_id or "\n" in content_id):
+        raise ValueError
     return AttachmentMetadata(
         id=relative.as_posix(),
         filename=path.name,
         media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
         size_bytes=size,
+        inline=inline,
+        content_id=content_id,
     )
+
+
+_RESERVED_HEADERS = {
+    "bcc",
+    "cc",
+    "content-type",
+    "date",
+    "from",
+    "in-reply-to",
+    "message-id",
+    "mime-version",
+    "references",
+    "reply-to",
+    "sender",
+    "subject",
+    "to",
+}
+
+
+def _headers(value: Any, *, allow_remove: bool = False) -> dict[str, str | None]:
+    if not isinstance(value, Mapping):
+        raise TypeError
+    result: dict[str, str | None] = {}
+    for name, item in value.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or any(char in name for char in "\r\n:")
+            or name.casefold() in _RESERVED_HEADERS
+            or (item is None and not allow_remove)
+            or (
+                item is not None
+                and (not isinstance(item, str) or "\r" in item or "\n" in item)
+            )
+        ):
+            raise ValueError
+        result[name] = item
+    return result
 
 
 def _attachment_path(value: str, root: Path) -> tuple[Path, Path]:
@@ -472,7 +563,7 @@ class _MaterializedDraft:
         root = self._policy.attachment_root
         if root is None:
             raise ToolError("Local attachments require a configured attachment_root.")
-        self._temporary = tempfile.TemporaryDirectory(prefix="personal-mail-")
+        self._temporary = tempfile.TemporaryDirectory(prefix="imap-smtp-mcp-")
         os.chmod(self._temporary.name, 0o700)
         materialized: list[AttachmentMetadata] = []
         total = 0
@@ -527,6 +618,7 @@ class _MaterializedDraft:
             reply_to=self._draft.reply_to,
             forward_of=self._draft.forward_of,
             attachments=tuple(materialized),
+            headers=self._draft.headers,
         )
 
     def __exit__(self, *_exc: object) -> None:
@@ -638,6 +730,7 @@ def _draft_json(draft: Draft) -> dict[str, Any]:
             }
             for item in draft.attachments
         ],
+        "headers": dict(draft.headers),
     }
 
 
@@ -663,4 +756,5 @@ def _draft_from_json(value: Mapping[str, Any]) -> Draft:
         if value["forward_of"]
         else None,
         attachments=tuple(AttachmentMetadata(**item) for item in value["attachments"]),
+        headers=tuple(sorted(value.get("headers", {}).items())),
     )

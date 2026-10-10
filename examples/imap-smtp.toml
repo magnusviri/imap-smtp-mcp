@@ -1,14 +1,14 @@
 [server]
 request_timeout_seconds = 30
-keychain_service = "personal-mail-mcp"
+keychain_service = "imap-smtp-mcp"
 
 [[accounts]]
-id = "personal"
+id = "imap-smtp"
 type = "imap-smtp"
 sender_addresses = ["owner@example.com"]
 mailboxes = ["INBOX", "Archive", "Sent", "Drafts"]
 username = "owner@example.com"
-secret_ref = "personal-imap-smtp"
+secret_ref = "imap-smtp"
 
 [accounts.imap]
 host = "imap.example.com"

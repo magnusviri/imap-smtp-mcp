@@ -1,7 +1,7 @@
 # Gmail / Google Workspace. Store a Google app password (or supported OAuth
 # bridge credential) under this Keychain reference; never put it in this file.
 [server]
-keychain_service = "personal-mail-mcp"
+keychain_service = "imap-smtp-mcp"
 
 [[accounts]]
 id = "gmail"
